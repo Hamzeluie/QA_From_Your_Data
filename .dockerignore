@@ -1,0 +1,106 @@
+# ==========================================
+# 1. PYTHON & VIRTUAL ENVIRONMENTS (CRITICAL)
+# ==========================================
+# Never copy the host's virtual environment into the container
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================================
+# 2. LOCAL DATABASE DATA (HUGE SIZE)
+# ==========================================
+# Prevents gigabytes of local DB state from being sent to the Docker daemon
+checkpoints/db/
+
+# ==========================================
+# 3. MODEL WEIGHTS & CHECKPOINTS
+# ==========================================
+# These should be downloaded inside the container or mounted as volumes,
+# not baked into the Docker image layer.
+checkpoints/all-MiniLM-L6-v2/
+checkpoints/en_core_web_sm/en_core_web_sm-3.8.0/
+checkpoints/models--*/
+checkpoints/entity_resolution_full_state/
+
+# ==========================================
+# 4. SECRETS & ENVIRONMENT VARIABLES
+# ==========================================
+# Secrets should be passed at runtime, never baked into the image
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ==========================================
+# 5. GIT & VERSION CONTROL
+# ==========================================
+.git/
+.gitignore
+.gitattributes
+
+# ==========================================
+# 6. DOCKER & COMPOSE FILES
+# ==========================================
+# The container doesn't need to know about its own orchestration files
+docker-compose.yml
+docker-compose.override.yml
+Dockerfile
+Dockerfile.*
+
+# ==========================================
+# 7. DOCUMENTATION & TESTS (Optional but recommended)
+# ==========================================
+# Unless your container explicitly runs tests or serves docs, exclude them
+docs/
+test/
+tests/
+README.md
+*.md
+
+# ==========================================
+# 8. IDE & OPERATING SYSTEM FILES
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# 9. LOCAL LOGS & TEMP FILES
+# ==========================================
+*.log
+logs/
+*.tmp
+*.temp
+kg_outbox.sqlite3
+*.sqlite3

@@ -1,0 +1,87 @@
+# ==========================================
+# 1. SENSITIVE DATA & SECRETS (CRITICAL)
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ==========================================
+# 2. PYTHON & VIRTUAL ENVIRONMENTS
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# ==========================================
+# 3. PROJECT-SPECIFIC: CHECKPOINTS & MODELS
+# ==========================================
+# Ignore heavy model weights and cached downloads
+checkpoints/all-MiniLM-L6-v2/
+checkpoints/en_core_web_sm/en_core_web_sm-3.8.0/
+checkpoints/models--*/
+checkpoints/en_core_web_sm
+*/sandbox.py
+
+# Ignore local database data (Neo4j, Elastic, ClickHouse, Qdrant, Redis)
+checkpoints/db/
+
+# Ignore local state files (unless you explicitly want to share a baseline state)
+checkpoints/entity_resolution_full_state/
+
+# ==========================================
+# 4. LOCAL DATABASES & STORAGE FILES
+# ==========================================
+*.sqlite3
+*.sqlite
+*.db
+kg_outbox.sqlite3
+
+# ==========================================
+# 5. LOGS & TEMPORARY FILES
+# ==========================================
+*.log
+logs/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ==========================================
+# 6. IDE & EDITOR CONFIGURATIONS
+# ==========================================
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# ==========================================
+# 7. OPERATING SYSTEM FILES
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# 8. DOCKER & CONTAINERIZATION
+# ==========================================
+# Keep docker-compose.yml, but ignore local overrides or secrets
+docker-compose.override.yml
+.docker/
