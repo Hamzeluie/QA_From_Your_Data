@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from config.settings import settings
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -37,7 +38,7 @@ def test_elasticsearch():
     try:
         from elasticsearch import Elasticsearch
         # .strip() removes any hidden trailing spaces or newlines from the .env file
-        url = os.getenv("ELASTIC_SEARCH_HOST", "http://localhost:9200").strip()
+        url = os.getenv("ELASTIC_SEARCH_HOST", settings.ELASTIC_SEARCH_HOST).strip()
         
         client = Elasticsearch(
             url, 
