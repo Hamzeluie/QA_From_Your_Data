@@ -3,7 +3,7 @@ import pandas as pd
 from unittest.mock import patch, MagicMock
 
 from ingestion.unified_resolver import UnifiedEntityResolver
-from shared.data_classes import DisambiguationStatus, Entity, Chunk
+from shared.data_classes import DisambiguationStatus, Entity, Chunk, EntityLabels
 
 
 @pytest.fixture
@@ -11,7 +11,7 @@ def resolver(factory, mock_embedder):
     r = UnifiedEntityResolver(
         factory=factory,
         embedder=mock_embedder,
-        merge_threshold=0.99,  # high threshold so merges don't happen accidentally
+        merge_threshold=0.92,  # high threshold so merges don't happen accidentally
     )
     return r
 
@@ -96,7 +96,7 @@ class TestUnifiedResolverIntegration:
         # Operator resolves a new entity
         resolver.add_user_resolution(
             canonical_name="TestCorp",
-            entity_label="ORG",
+            entity_label=EntityLabels.ORG, 
             summary="A test corporation",
             aliases=["TC", "Test Corp"],
         )

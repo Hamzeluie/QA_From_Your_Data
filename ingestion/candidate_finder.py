@@ -81,9 +81,7 @@ class CandidateFinder:
         candidates.sort(key=lambda x: x.match_score, reverse=True)
 
         # Cache for 60 seconds
-        self.factory.redis.client.setex(
-            cache_key, 60, json.dumps([c.to_dict() for c in candidates])
-        )
+        self.factory.redis.client.set(cache_key, json.dumps([c.to_dict() for c in candidates]), ex=60)
         return candidates
 
     def add_entity(
@@ -160,6 +158,9 @@ class CandidateFinder:
                           (lev_name * 0.05) + \
                           label_bonus
 
+            if cand.match_method == 'exact_match':
+                final_score = max(final_score, 1.0)
+                
             cand.neural_sim = round(neural_sim, 3)
             cand.jaccard_ctx = round(jaccard_ctx, 3)
             cand.levenshtein_name = round(lev_name, 3)

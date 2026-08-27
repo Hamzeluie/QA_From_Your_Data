@@ -10,7 +10,11 @@ import spacy
 from config.settings import settings
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from dateutil import parser as date_parser
-    
+try:
+    from dateutil import parser as dateutil_parser
+    DATEUTIL_AVAILABLE = True
+except ImportError:
+    DATEUTIL_AVAILABLE = False
 
 NON_LINKABLE_TYPES = {"DATE", "TIME", "MONEY", "PERCENT", "CARDINAL", "ORDINAL", "QUANTITY", "NUMBER", "NUM"}
 

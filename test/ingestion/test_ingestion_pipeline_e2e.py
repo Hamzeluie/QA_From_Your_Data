@@ -56,7 +56,7 @@ class TestIngestionPipelineE2E:
                   sentence="He was born in Loja.", date_time=""),
         ]
 
-        with patch.object(pipeline.resolver, '_extract_entities_with_coref', return_value=(fake_chunks, fake_df)):
+        with patch.object(pipeline.resolver, '_extract_entities_with_coref', return_value=(fake_df, fake_chunks)):
             result = pipeline.run(doc_id=doc_id, raw_text=text, owner_id="u1")
 
         assert result["status"] == "success"
@@ -86,7 +86,7 @@ class TestIngestionPipelineE2E:
         fake_chunks = [Chunk(doc_id=doc_id, chunk_id="c1", owner_id="u1",
                              sentence=text, date_time="")]
 
-        with patch.object(pipeline.resolver, '_extract_entities_with_coref', return_value=(fake_chunks, fake_df)):
+        with patch.object(pipeline.resolver, '_extract_entities_with_coref', return_value=(fake_df, fake_chunks)):
             result = pipeline.run(doc_id=doc_id, raw_text=text, owner_id="u1")
 
         assert result["review_count"] > 0
@@ -103,7 +103,7 @@ class TestIngestionPipelineE2E:
             Chunk(doc_id=doc_id, chunk_id="c2", owner_id="u1", sentence="Chunk two.", date_time=""),
         ]
 
-        with patch.object(pipeline.resolver, '_extract_entities_with_coref', return_value=(fake_chunks, fake_df)):
+        with patch.object(pipeline.resolver, '_extract_entities_with_coref', return_value=(fake_df, fake_chunks)):
             pipeline.run(doc_id=doc_id, raw_text=text, owner_id="u1")
 
         # Qdrant check

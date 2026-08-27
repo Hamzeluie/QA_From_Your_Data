@@ -12,15 +12,15 @@ from pathlib import Path
 import pandas as pd
 import spacy
 from sentence_transformers import SentenceTransformer
-
+from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
 from storage.factory import StorageFactory
 from storage.outbox import OutboxPoller
 from ingestion.candidate_finder import CandidateFinder
 from shared.data_classes import (
-    Entity, EntityLabels, DisambiguationStatus, ResolvedEntity, Relation, Chunk
+    Entity, EntityLabels, DisambiguationStatus, ResolvedEntity, Relation, Chunk, CandidateResult
 )
 from shared.utils import (
-    WikipediaEntitySummarizer, ValueNormalizer, NON_LINKABLE_TYPES
+    WikipediaEntitySummarizer, ValueNormalizer, semantic_sentence_chunk, NON_LINKABLE_TYPES
 )
 from config.settings import settings
 
@@ -42,6 +42,7 @@ class UnifiedEntityResolver:
         cross_doc_threshold: float = 0.82,
         use_ner_with_confidence: bool = False,
         use_cot: bool = True,
+        run_demo: bool = False,
     ):
         self.factory = factory or StorageFactory.from_env()
         self.embedder = embedder or self._load_embedder()
@@ -55,16 +56,17 @@ class UnifiedEntityResolver:
         # Wiki summarizer (kept from your original code)
         self.wiki = WikipediaEntitySummarizer(self.embedder)
 
-        # NER / Coref (kept from your original code)
-        # NOTE: import your actual extractors here
-        # from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
-        # self.ner_llm = NERWithConfidence() if use_ner_with_confidence else NERExtractor(use_cot=use_cot)
-        self.ner_llm = None  # placeholder: wire your actual class
         self.nlp = spacy.load(settings.SPACY_MODEL_PATH)
-        # self.coref = CorefResolver(self.nlp, mode="nlp")
+        if run_demo == False:
+            self.ner_llm = NERWithConfidence() if use_ner_with_confidence else NERExtractor(use_cot=use_cot)
+            self.coref = CorefResolver(self.nlp, mode="nlp")
+        else:
+            self.ner_llm = None
+            self.coref = None
 
         self.merge_threshold = merge_threshold
         self.cross_doc_threshold = cross_doc_threshold
+        self.run_demo = run_demo
 
     def _load_embedder(self):
         model_path = getattr(settings, "EMBEDDING_MODEL", "all-MiniLM-L6-v2")
@@ -81,20 +83,20 @@ class UnifiedEntityResolver:
         self.factory.clickhouse.create_document(doc_id, owner_id)
 
         # 2. NER + Coref (your existing logic)
-        # entities_df, chunk_info = self._extract_entities_with_coref(document)
-        # entities_df = self._remove_subsumed_entities(entities_df)
-
-        # --- FAKE NER for structure demo (replace with your real NER) ---
-        chunk_info, entities_df = self._fake_ner_for_structure(doc_id, document)
+        if self.run_demo:
+            chunk_info, entities_df = self._fake_ner_for_structure(doc_id, document)
+        else:
+            entities_df, chunk_info = self._extract_entities_with_coref(document)
+            entities_df = self._remove_subsumed_entities(entities_df)
         # ---
 
         self.factory.clickhouse.transition_state(doc_id, "uploaded", "ner_done")
 
         # 3. Resolve each entity
-        resolved_entities = []
+        resolved_pairs = []
         for _, row in entities_df.iterrows():
             resolved = self._resolve_entity(row)
-            resolved_entities.append(resolved)
+            resolved_pairs.append((resolved, row))
 
             # Audit log
             self.factory.clickhouse.log_mention(
@@ -113,36 +115,44 @@ class UnifiedEntityResolver:
         self.factory.clickhouse.transition_state(doc_id, "ner_done", "er_done")
 
         # 4. Split clean vs review
-        clean = [r for r in resolved_entities if r.status == DisambiguationStatus.RESOLVED]
-        review = [r for r in resolved_entities if r.status != DisambiguationStatus.RESOLVED]
+        clean_pairs = [p for p in resolved_pairs if p[0].status == DisambiguationStatus.RESOLVED]
+        review_pairs = [p for p in resolved_pairs if p[0].status != DisambiguationStatus.RESOLVED]
 
         # 5. Cross-document resolution on unresolved
-        if review:
-            review = self._cross_doc_resolve(review)
-            newly_resolved = [r for r in review if r.status == DisambiguationStatus.RESOLVED]
-            clean.extend(newly_resolved)
-            review = [r for r in review if r.status != DisambiguationStatus.RESOLVED]
+        if review_pairs:
+            review_entities = [p[0] for p in review_pairs]
+            review_entities = self._cross_doc_resolve(review_entities)
+            newly_resolved = [(e, row) for e, (_, row) in zip(review_entities, review_pairs) if e.status == DisambiguationStatus.RESOLVED]
+            still_review = [(e, row) for e, (_, row) in zip(review_entities, review_pairs) if e.status != DisambiguationStatus.RESOLVED]
+            clean_pairs.extend(newly_resolved)
+            review_pairs = still_review
 
         # 6. Merge similar nodes (Redis distributed lock)
         self._merge_catalog()
 
         # 7. Persist unresolved queue
-        for r in review:
+        for r, row in review_pairs:
             self.factory.clickhouse.enqueue_unresolved(
-                resolution_id=f"{doc_id}_{r.original_text}_{r.start}",
+                resolution_id=f"{doc_id}_{r.original_text}_{row.get('start', 0)}",
                 doc_id=doc_id,
                 entity_row=r,
                 candidates_json=json.dumps([c.to_dict() for c in r.kg_candidates]),
             )
-
         # 8. State transition
-        if review:
+        if review_pairs:
             self.factory.clickhouse.transition_state(doc_id, "er_done", "review_pending")
         else:
             self.factory.clickhouse.transition_state(doc_id, "er_done", "re_done")
 
-        clean_df = pd.DataFrame([r.to_dict() for r in clean]) if clean else pd.DataFrame()
-        review_df = pd.DataFrame([r.to_dict() for r in review]) if review else pd.DataFrame()
+        clean_df = pd.DataFrame([
+            {**r.to_dict(), "doc_id": row.get("doc_id"), "mention_sentence": row.get("mention_sentence")}
+            for r, row in clean_pairs
+        ]) if clean_pairs else pd.DataFrame()
+
+        review_df = pd.DataFrame([
+            {**r.to_dict(), "doc_id": row.get("doc_id"), "mention_sentence": row.get("mention_sentence")}
+            for r, row in review_pairs
+        ]) if review_pairs else pd.DataFrame()
 
         return chunk_info, clean_df, review_df
 
@@ -165,7 +175,7 @@ class UnifiedEntityResolver:
         # 1. Graph source of truth + outbox journal (ACID)
         self.factory.neo4j.upsert_entity(
             canonical=canonical,
-            label=entity_label.value,
+            label=entity_label.value if hasattr(entity_label, "value") else entity_label,
             aliases=alias_list,
             summary=summary,
             source="user",
@@ -183,6 +193,83 @@ class UnifiedEntityResolver:
 
         logger.info(f"[User Feedback] '{canonical}' ({entity_label.value}) registered. Outbox will sync to ES/Qdrant.")
 
+    # ── NED + Coreference Resolution ─────────────────────────────────────────────────────
+     
+    def _name_entity_recognition(self, doc:str)-> List[Dict]:
+        all_preds = []
+        char_offset = 0
+        
+        for idx, chunk in enumerate(semantic_sentence_chunk(doc)):
+            result = self.ner_llm(chunk)
+            chunk = result['sentence']
+            
+            chunk_pred = {}
+            chunk_ents = []           
+            chunk_pred["chunk_text"] = chunk
+            chunk_pred["chunk_id"] = idx + 1
+            
+            # CRITICAL: Adjust offsets to document-level
+            for ent in result.get("entities", []):
+                ent.start += char_offset
+                ent.end += char_offset
+                chunk_ents.append(ent)                
+
+            char_offset += len(chunk) + 1
+            chunk_pred["entities"] = chunk_ents
+            all_preds.append(chunk_pred)
+        return all_preds
+    
+    def _chunk_entity_splitter(self, ner_result:list[Dict]):
+        all_entities = []
+        chunk_info = []
+        for chunk in ner_result:
+            chunk_info.append((chunk["chunk_id"], chunk["chunk_text"]))
+            all_entities.extend(chunk["entities"])
+
+        return all_entities, chunk_info
+    
+    def _extract_entities_with_coref(self, document:str):
+        entity_extracted = self._name_entity_recognition(document)
+        all_entities, chunk_info = self._chunk_entity_splitter(entity_extracted)
+        return self.coref.resolve_from_sentences(document, all_entities), chunk_info
+    
+    def _remove_subsumed_entities(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Drop entities whose character span is fully contained inside a larger
+        entity span in the same document. Prefer longer spans.
+        """
+        if df.empty:
+            return df
+
+        rows = df.to_dict("records")
+
+        # Sort by span length descending, then by start position
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: (r["end"] - r["start"], r["start"]),
+            reverse=True,
+        )
+
+        kept = []
+        kept_spans = []  # (doc_id, start, end)
+
+        for row in rows_sorted:
+            doc_id, s, e = row["doc_id"], row["start"], row["end"]
+
+            # Is this row fully contained inside an already-kept span?
+            is_subsumed = any(
+                doc_id == kd and s >= ks and e <= ke and (s != ks or e != ke)
+                for kd, ks, ke in kept_spans
+            )
+
+            if not is_subsumed:
+                kept.append(row)
+                kept_spans.append((doc_id, s, e))
+
+        # Restore original document order
+        kept_sorted = sorted(kept, key=lambda r: (r["doc_id"], r["start"]))
+        return pd.DataFrame(kept_sorted)
+    
     # ── Resolution Logic ─────────────────────────────────────────────────────
 
     def _resolve_entity(self, row: pd.Series) -> ResolvedEntity:
@@ -268,7 +355,7 @@ class UnifiedEntityResolver:
         if len(candidates) == 1:
             cand = candidates[0]
             label_match = self._check_label_match(entity_label_hint, cand.label)
-            if label_match or cand.match_score >= 0.88:
+            if cand.match_score >= 0.88:
                 status = DisambiguationStatus.RESOLVED
                 conf = cand.match_score * (0.9 if label_match else 0.85)
                 needs_review = False

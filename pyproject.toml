@@ -8,3 +8,4 @@ markers = [
     "redis: marks tests that require a running Redis instance",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
+pythonpath = ["."]
