@@ -21,7 +21,7 @@ class Settings:
    
    GRAPH_DB_URL = os.getenv("GRAPH_DB_URL", "bolt://localhost:7687")
    GRAPH_DB_USER= os.getenv("GRAPH_DB_USER", "neo4j")
-   GRAPH_DB_PASSWORD= os.getenv("GRAPH_DB_PASSWORD", "not needed")
+   GRAPH_DB_PASSWORD= os.getenv("GRAPH_DB_PASSWORD", "")
    
    CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "localhost")
    CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", 8123)

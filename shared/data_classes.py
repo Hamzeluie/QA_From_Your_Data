@@ -34,9 +34,9 @@ class Relation:
     source: str = "dspy"
     needs_review: bool = False
     evidence: List[str] = field(default_factory=list)
-    # provenance fields used by RelationResolver for dedup / traceability
     relation_id: Optional[str] = None
     chunk_id: Optional[str] = None
+    provisional: bool = False
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -181,3 +181,62 @@ class ResolvedEntity:
             "is_nil": self.is_nil,
             "coref_to": self.coref_to,
         }
+
+
+@dataclass
+class CandidateResult:
+    """
+    Structured output of CandidateFinder.find_candidates().
+    Mirrors the Dict returned by legacy NEDEngine._make_candidate(),
+    but is type-safe and cross-cutting.
+    """
+    canonical: str
+    label: str
+    aliases: List[str]
+    summary: str
+    context_indicators: List[str]
+    related_to: List[str]
+    match_score: float
+    match_method: str
+    neural_sim: Optional[float] = None
+    jaccard_ctx: Optional[float] = None
+    levenshtein_name: Optional[float] = None
+    label_match: bool = False
+    source: str = "unknown"
+
+    def to_dict(self) -> Dict:
+        return {
+            "canonical": self.canonical,
+            "label": self.label,
+            "aliases": self.aliases,
+            "summary": self.summary,
+            "context_indicators": self.context_indicators,
+            "related_to": self.related_to,
+            "match_score": round(self.match_score, 3),
+            "match_method": self.match_method,
+            "neural_sim": self.neural_sim,
+            "jaccard_ctx": self.jaccard_ctx,
+            "levenshtein_name": self.levenshtein_name,
+            "label_match": self.label_match,
+            "source": self.source,
+        }
+
+
+@dataclass
+class OutboxEvent:
+    """
+    ACID outbox entry. Written to Neo4j in the SAME TRANSACTION
+    as the entity mutation, then asynchronously fanned out to
+    ES, Qdrant, and Redis by a poller.
+    """
+    event_id: str
+    event_type: str          # "entity_upserted", "entity_merged", "relation_created"
+    canonical: str           # target entity
+    payload_json: str        # serialized parameters
+    target_stores: List[str] # ["es", "qdrant", "redis"]
+    processed: bool = False
+    attempts: int = 0
+    error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    processed_at: Optional[str] = None
+

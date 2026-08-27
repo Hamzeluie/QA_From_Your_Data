@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "neo4j: marks tests that require a running Neo4j instance",
+    "clickhouse: marks tests that require a running ClickHouse instance",
+    "qdrant: marks tests that require a running Qdrant instance",
+    "elasticsearch: marks tests that require a running Elasticsearch instance",
+    "redis: marks tests that require a running Redis instance",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
