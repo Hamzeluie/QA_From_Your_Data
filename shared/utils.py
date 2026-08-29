@@ -4,7 +4,7 @@ import re
 import requests
 import json
 from datetime import datetime, timedelta
-from shared.data_classes import ResolvedEntity, DisambiguationStatus
+from shared.data_classes import ResolvedEntity, DisambiguationStatus, EntityLabels
 from sentence_transformers import SentenceTransformer
 import spacy
 from config.settings import settings
@@ -193,34 +193,91 @@ def _find_all_occurrences(text: str, substring: str) -> list[int]:
 
 class WikipediaEntitySummarizer:
     LABEL_SIGNATURES = {
-        "PERSON": [
+        EntityLabels.PER.value: [
             "born", "politician", "businessman", "businesswoman", "actor", "actress",
             "author", "scientist", "footballer", "musician", "singer", "CEO",
             "entrepreneur", "engineer", "inventor", "philanthropist", "artist",
             "is a ", "was a ", "is an ", "was an "
         ],
-        "ORG": [
+        EntityLabels.ORG.value: [
             "company", "corporation", "inc.", "ltd", "organization", "firm",
             "multinational", "headquartered in", "founded in", "subsidiary of",
             "publicly traded", "listed on", "stock exchange", "enterprise"
         ],
-        "GPE": [
+        EntityLabels.LOC.value: [
             "country", "city", "state", "capital", "republic", "kingdom",
             "province", "county", "municipality", "located in", "population of",
             "island", "continent", "territory"
         ],
-        "PRODUCT": [
+        EntityLabels.FAC.value: [
+            "airport", "bridge", "highway", "building", "station", "hospital",
+            "university", "museum", "stadium", "located in", "built in"
+        ],
+        EntityLabels.PRODUCT.value: [
             "software", "device", "car", "phone", "game", "console", "product",
             "launched in", "released by", "developed by", "chatbot", "model",
             "series", "platform", "application", "app"
         ],
-        "TECHNOLOGY": [
+        EntityLabels.TECHNOLOGY.value: [
             "technology", "artificial intelligence", "machine learning",
             "deep learning", "neural network", "algorithm", "computational",
             "software framework", "model", "system", "platform", "architecture",
             "is a field of", "is a branch of", "is a type of"
         ],
+        EntityLabels.EVENT.value: [
+            "war", "battle", "conference", "festival", "olympics", "tournament",
+            "held in", "took place", "anniversary", "celebration"
+        ],
+        EntityLabels.WORK_OF_ART.value: [
+            "novel", "book", "film", "movie", "song", "album", "painting",
+            "written by", "directed by", "composed by", "published in"
+        ],
+        EntityLabels.LAW.value: [
+            "act", "treaty", "constitution", "amendment", "law", "bill",
+            "signed into law", "ratified", "legal"
+        ],
+        EntityLabels.LANGUAGE.value: [
+            "language", "dialect", "spoken in", "official language", "lingua franca"
+        ],
+        EntityLabels.DATE.value: [
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december"
+        ],
+        EntityLabels.TIME.value: [
+            "morning", "afternoon", "evening", "night", "midnight", "noon",
+            "a.m.", "p.m.", "o'clock", "hour", "minute", "second"
+        ],
+        EntityLabels.MONEY.value: [
+            "dollar", "euro", "pound", "yen", "usd", "eur", "gbp",
+            "million", "billion", "trillion", "budget", "revenue", "cost"
+        ],
+        EntityLabels.PERCENT.value: [
+            "percent", "percentage", "%", "proportion", "rate", "share"
+        ],
+        EntityLabels.QUANTITY.value: [
+            "meter", "kilometer", "mile", "kilogram", "ton", "liter",
+            "degree", "celsius", "fahrenheit", "inch", "foot", "pound"
+        ],
+        EntityLabels.CARDINAL.value: [
+            "one", "two", "three", "hundred", "thousand", "million"
+        ],
+        EntityLabels.ORDINAL.value: [
+            "first", "second", "third", "fourth", "fifth", "last"
+        ],
+        EntityLabels.NORP.value: [
+            "american", "european", "asian", "african", "christian", "muslim",
+            "jewish", "buddhist", "hindu", "democrat", "republican", "conservative",
+            "liberal", "socialist", "nationality", "ethnic"
+        ],
+        EntityLabels.MISC.value: [
+            "award", "honor", "title", "degree", "religion", "ideology",
+            "culture", "tradition", "custom", "mythology", "legend"
+        ],
+        EntityLabels.NUM.value: [
+            "number", "amount", "total", "sum", "count", "quantity"
+        ],
     }
+
     def __init__(self, embedding:SentenceTransformer=None):
         self.wiki_api = "https://en.wikipedia.org/w/api.php"
         self.headers = {"User-Agent": "EntityLinkerBot/1.0"}

@@ -155,7 +155,7 @@ class RelationPipeline:
 
         # ClickHouse analytics batch
         try:
-            self.factory.clickhouse.insert_relations(relations)
+            self.factory.postgres.insert_relations(relations)
         except Exception as exc:
             logger.error(f"ClickHouse relation batch failed: {exc}")
 

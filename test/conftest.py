@@ -17,11 +17,6 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-# Ensure project root is on path when running from test/ subdirs
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -35,7 +30,7 @@ def _is_reachable(host: str, port: int, timeout: float = 2.0) -> bool:
         return False
 
 NEO4J_UP = _is_reachable("localhost", 7687)
-CLICKHOUSE_UP = _is_reachable("localhost", 8123)
+POSTGRES_UP = _is_reachable("localhost", 5432)
 QDRANT_UP = _is_reachable("localhost", 6333)
 ES_UP = _is_reachable("localhost", 9200)
 REDIS_UP = _is_reachable("localhost", 6379)
@@ -46,8 +41,8 @@ def pytest_collection_modifyitems(config, items):
         markers = {m.name for m in item.iter_markers()}
         if "neo4j" in markers and not NEO4J_UP:
             item.add_marker(pytest.mark.skip(reason="Neo4j not reachable on localhost:7687"))
-        if "clickhouse" in markers and not CLICKHOUSE_UP:
-            item.add_marker(pytest.mark.skip(reason="ClickHouse not reachable on localhost:8123"))
+        if "postgres" in markers and not POSTGRES_UP:
+            item.add_marker(pytest.mark.skip(reason="Postgres not reachable on localhost:5432"))
         if "qdrant" in markers and not QDRANT_UP:
             item.add_marker(pytest.mark.skip(reason="Qdrant not reachable on localhost:6333"))
         if "elasticsearch" in markers and not ES_UP:
@@ -57,7 +52,7 @@ def pytest_collection_modifyitems(config, items):
         if "integration" in markers:
             # If any integration marker is present but no specific service marker,
             # still require at least one service to be up to avoid false passes
-            if not any([NEO4J_UP, CLICKHOUSE_UP, QDRANT_UP, ES_UP, REDIS_UP]):
+            if not any([NEO4J_UP, POSTGRES_UP, QDRANT_UP, ES_UP, REDIS_UP]):
                 item.add_marker(pytest.mark.skip(reason="No Docker services reachable"))
 
 # ── Unique ID per test ─────────────────────────────────────────────────────
@@ -113,24 +108,28 @@ def neo4j_store():
         session.run("MATCH (n) DETACH DELETE n")
     store.close()
 
+
 @pytest.fixture(scope="session")
-def clickhouse_store():
-    if not CLICKHOUSE_UP:
-        pytest.skip("ClickHouse unavailable")
-    from storage.clickhouse_store import ClickHouseStateStore
-    store = ClickHouseStateStore(
-        host=settings.CLICKHOUSE_HOST,
-        port=int(settings.CLICKHOUSE_PORT),
-        username="default",
-        password="",
-        database="default",
+def postgres_store():
+    if not POSTGRES_UP:
+        pytest.skip("Postgres unavailable")
+    from storage.postgres_store import PostgresStateStore
+    store = PostgresStateStore(
+        host=settings.POSTGRES_HOST,
+        port=int(settings.POSTGRES_PORT),
+        username=settings.POSTGRES_USER,
+        password=settings.POSTGRES_PASSWORD,
+        database=settings.POSTGRES_DB,
     )
     store.init_tables()
     yield store
-    store.client.command("TRUNCATE TABLE IF EXISTS document_state")
-    store.client.command("TRUNCATE TABLE IF EXISTS unresolved_queue")
-    store.client.command("TRUNCATE TABLE IF EXISTS mention_log")
-    store.client.command("TRUNCATE TABLE IF EXISTS relations")
+    # Clean-up
+    conn = store._get_conn()
+    with conn.cursor() as cur:
+        for tbl in ["document_state", "unresolved_queue", "mention_log", "relations"]:
+            cur.execute(f"TRUNCATE TABLE {tbl} RESTART IDENTITY CASCADE")
+    conn.commit()
+    store.close()
 
 @pytest.fixture(scope="session")
 def qdrant_store():
@@ -170,11 +169,11 @@ def redis_cache():
         cache.client.delete(key)
 
 @pytest.fixture
-def factory(mock_embedder, neo4j_store, clickhouse_store, qdrant_store, es_store, redis_cache):
+def factory(mock_embedder, neo4j_store, postgres_store, qdrant_store, es_store, redis_cache):
     from storage.factory import StorageFactory
     f = MagicMock(spec=StorageFactory)
     f.neo4j = neo4j_store
-    f.clickhouse = clickhouse_store
+    f.postgres = postgres_store
     f.qdrant = qdrant_store
     f.es = es_store
     f.redis = redis_cache

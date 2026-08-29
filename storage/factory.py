@@ -6,7 +6,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import os
 from typing import Optional
 from storage.neo4j_store import Neo4jEntityStore
-from storage.clickhouse_store import ClickHouseStateStore
+from storage.postgres_store import PostgresStateStore
 from storage.qdrant_store import QdrantVectorStore
 from storage.elasticsearch_store import ElasticsearchEntitySearch
 from storage.redis_cache import RedisCache
@@ -25,11 +25,11 @@ class StorageFactory:
             neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
             neo4j_password=os.getenv("NEO4J_PASSWORD", "password"),
             neo4j_database=os.getenv("NEO4J_DATABASE", "neo4j"),
-            clickhouse_host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-            clickhouse_port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
-            clickhouse_user=os.getenv("CLICKHOUSE_USER", "default"),
-            clickhouse_password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-            clickhouse_database=os.getenv("CLICKHOUSE_DB", "default"),
+            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
+            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
+            postgres_user=os.getenv("POSTGRES_USER", "kg_user"),
+            postgres_password=os.getenv("POSTGRES_PASSWORD", "kg_pass"),
+            postgres_database=os.getenv("POSTGRES_DB", "knowledge_graph"),
             qdrant_host=os.getenv("QDRANT_HOST", "localhost"),
             qdrant_port=int(os.getenv("QDRANT_PORT", "6333")),
             es_hosts=os.getenv("ES_HOSTS", "http://localhost:9200").split(","),
@@ -46,11 +46,11 @@ class StorageFactory:
         neo4j_user: str,
         neo4j_password: str,
         neo4j_database: str,
-        clickhouse_host: str,
-        clickhouse_port: int,
-        clickhouse_user: str,
-        clickhouse_password: str,
-        clickhouse_database: str,
+        postgres_host: str,
+        postgres_port: int,
+        postgres_user: str,
+        postgres_password: str,
+        postgres_database: str,
         qdrant_host: str,
         qdrant_port: int,
         es_hosts: list,
@@ -62,11 +62,12 @@ class StorageFactory:
         embedder=None
     ):
         self._neo4j = None
-        self._clickhouse = None
+        self._postgres = None
         self._qdrant = None
         self._es = None
         self._redis = None
         self.embedder = embedder
+
 
         self._neo4j_cfg = {
             "uri": neo4j_uri,
@@ -74,12 +75,12 @@ class StorageFactory:
             "password": neo4j_password,
             "database": neo4j_database,
         }
-        self._ch_cfg = {
-            "host": clickhouse_host,
-            "port": clickhouse_port,
-            "username": clickhouse_user,
-            "password": clickhouse_password,
-            "database": clickhouse_database,
+        self._pg_cfg = {
+            "host": postgres_host,
+            "port": postgres_port,
+            "username": postgres_user,
+            "password": postgres_password,
+            "database": postgres_database,
         }
         self._qdrant_cfg = {
             "host": qdrant_host,
@@ -105,11 +106,11 @@ class StorageFactory:
         return self._neo4j
 
     @property
-    def clickhouse(self) -> ClickHouseStateStore:
-        if self._clickhouse is None:
-            self._clickhouse = ClickHouseStateStore(**self._ch_cfg)
-        return self._clickhouse
-
+    def postgres(self) -> PostgresStateStore:
+        if self._postgres is None:
+            self._postgres = PostgresStateStore(**self._pg_cfg)
+        return self._postgres
+   
     @property
     def qdrant(self) -> QdrantVectorStore:
         if self._qdrant is None:
@@ -137,7 +138,7 @@ class StorageFactory:
     def init_all(self) -> None:
         """Idempotent initialization of schema/indexes/collections."""
         self.neo4j.init_schema()
-        self.clickhouse.init_tables()
+        self.postgres.init_tables()
         self.qdrant.init_collections()
         self.es.init_index()
         self.es.init_chunks_index()

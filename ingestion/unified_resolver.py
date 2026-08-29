@@ -14,10 +14,9 @@ import spacy
 from sentence_transformers import SentenceTransformer
 from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
 from storage.factory import StorageFactory
-from storage.outbox import OutboxPoller
 from ingestion.candidate_finder import CandidateFinder
 from shared.data_classes import (
-    Entity, EntityLabels, DisambiguationStatus, ResolvedEntity, Relation, Chunk, CandidateResult
+    EntityLabels, DisambiguationStatus, ResolvedEntity, Chunk, CandidateResult
 )
 from shared.utils import (
     WikipediaEntitySummarizer, ValueNormalizer, semantic_sentence_chunk, NON_LINKABLE_TYPES
@@ -80,7 +79,7 @@ class UnifiedEntityResolver:
         Returns: (chunk_info, clean_df, review_df)
         """
         # 1. State: document uploaded
-        self.factory.clickhouse.create_document(doc_id, owner_id)
+        self.factory.postgres.create_document(doc_id, owner_id)
 
         # 2. NER + Coref (your existing logic)
         if self.run_demo:
@@ -90,7 +89,7 @@ class UnifiedEntityResolver:
             entities_df = self._remove_subsumed_entities(entities_df)
         # ---
 
-        self.factory.clickhouse.transition_state(doc_id, "uploaded", "ner_done")
+        self.factory.postgres.transition_state(doc_id, "uploaded", "ner_done")
 
         # 3. Resolve each entity
         resolved_pairs = []
@@ -99,7 +98,7 @@ class UnifiedEntityResolver:
             resolved_pairs.append((resolved, row))
 
             # Audit log
-            self.factory.clickhouse.log_mention(
+            self.factory.postgres.log_mention(
                 doc_id=doc_id,
                 chunk_id=row.get("chunk_id"),
                 canonical_name=resolved.canonical_name,
@@ -112,7 +111,7 @@ class UnifiedEntityResolver:
                 source=resolved.source,
             )
 
-        self.factory.clickhouse.transition_state(doc_id, "ner_done", "er_done")
+        self.factory.postgres.transition_state(doc_id, "ner_done", "er_done")
 
         # 4. Split clean vs review
         clean_pairs = [p for p in resolved_pairs if p[0].status == DisambiguationStatus.RESOLVED]
@@ -132,7 +131,7 @@ class UnifiedEntityResolver:
 
         # 7. Persist unresolved queue
         for r, row in review_pairs:
-            self.factory.clickhouse.enqueue_unresolved(
+            self.factory.postgres.enqueue_unresolved(
                 resolution_id=f"{doc_id}_{r.original_text}_{row.get('start', 0)}",
                 doc_id=doc_id,
                 entity_row=r,
@@ -140,9 +139,9 @@ class UnifiedEntityResolver:
             )
         # 8. State transition
         if review_pairs:
-            self.factory.clickhouse.transition_state(doc_id, "er_done", "review_pending")
+            self.factory.postgres.transition_state(doc_id, "er_done", "review_pending")
         else:
-            self.factory.clickhouse.transition_state(doc_id, "er_done", "re_done")
+            self.factory.postgres.transition_state(doc_id, "er_done", "re_done")
 
         clean_df = pd.DataFrame([
             {**r.to_dict(), "doc_id": row.get("doc_id"), "mention_sentence": row.get("mention_sentence")}
@@ -318,7 +317,7 @@ class UnifiedEntityResolver:
                     return ResolvedEntity(
                         original_text=entity_text,
                         canonical_name=wiki.canonical_name,
-                        entity_label=wiki.entity_label,
+                        entity_label=EntityLabels(wiki.entity_label),
                         mention_sentence=sentence,
                         confidence=wiki.confidence,
                         status=DisambiguationStatus.RESOLVED,

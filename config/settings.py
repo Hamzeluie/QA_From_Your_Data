@@ -16,15 +16,18 @@ class Settings:
    SPACY_MODEL_NAME = os.getenv("SPACY_MODEL_NAME","en_core_web_sm")
    SPACY_MODEL_PATH = os.getenv("SPACY_MODEL_PATH","../model/en_core_web_sm")
    
-   ELASTIC_SEARCH_HOST = os.getenv("ELASTIC_SEARCH_HOST", "http://localhost:9200")
-   VECTOR_DB_URL = os.getenv("VECTOR_DB_URL", "http://localhost:6333")
+   ELASTIC_SEARCH_HOST = os.getenv("ELASTIC_SEARCH_HOST", "http://elasticsearch:9200")
+   VECTOR_DB_URL = os.getenv("VECTOR_DB_URL", "http://qdrant:6333")
    
-   GRAPH_DB_URL = os.getenv("GRAPH_DB_URL", "bolt://localhost:7687")
+   GRAPH_DB_URL = os.getenv("GRAPH_DB_URL", "bolt://neo4j:7687")
    GRAPH_DB_USER= os.getenv("GRAPH_DB_USER", "neo4j")
    GRAPH_DB_PASSWORD= os.getenv("GRAPH_DB_PASSWORD", "")
    
-   CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "localhost")
-   CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", 8123)
+   POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+   POSTGRES_PORT = os.getenv("POSTGRES_PORT", 5432)
+   POSTGRES_USER = os.getenv("POSTGRES_USER", "kg_user")
+   POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "kg_pass")
+   POSTGRES_DB = os.getenv("POSTGRES_DB", "knowledge_graph")
    
    OUTBOX_PATH = os.getenv("OUTBOX_PATH", "kg_outbox.sqlite3")
    

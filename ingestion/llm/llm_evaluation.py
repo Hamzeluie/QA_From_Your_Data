@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 import json
 
-from QA_From_Your_Data.utils.utils import Entity, MatchResult
+from utils.utils import Entity, MatchResult
 
 
 

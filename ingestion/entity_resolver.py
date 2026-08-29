@@ -889,43 +889,7 @@ class EntityResolver:
         print(f"[User Feedback] -> '{canonical}' "
               f"({entity_label}) registered with {len(alias_list)} alias(es).")
     
-    def _remove_subsumed_entities(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Drop entities whose character span is fully contained inside a larger
-        entity span in the same document. Prefer longer spans.
-        """
-        if df.empty:
-            return df
-
-        rows = df.to_dict("records")
-
-        # Sort by span length descending, then by start position
-        rows_sorted = sorted(
-            rows,
-            key=lambda r: (r["end"] - r["start"], r["start"]),
-            reverse=True,
-        )
-
-        kept = []
-        kept_spans = []  # (doc_id, start, end)
-
-        for row in rows_sorted:
-            doc_id, s, e = row["doc_id"], row["start"], row["end"]
-
-            # Is this row fully contained inside an already-kept span?
-            is_subsumed = any(
-                doc_id == kd and s >= ks and e <= ke and (s != ks or e != ke)
-                for kd, ks, ke in kept_spans
-            )
-
-            if not is_subsumed:
-                kept.append(row)
-                kept_spans.append((doc_id, s, e))
-
-        # Restore original document order
-        kept_sorted = sorted(kept, key=lambda r: (r["doc_id"], r["start"]))
-        return pd.DataFrame(kept_sorted)
-
+ 
     def save_full_state(self,
                         path: str,
                         clean_df: pd.DataFrame = None,

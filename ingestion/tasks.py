@@ -48,7 +48,7 @@ def ingest_document_task(self, doc_id: str, raw_text: str, owner_id: str):
         # Mark failed for observability
         try:
             factory = StorageFactory.from_env()
-            factory.clickhouse.transition_state(
+            factory.postgres.transition_state(
                 doc_id, None, "failed", error_message=str(exc)
             )
         except Exception as inner:
@@ -86,7 +86,7 @@ def backfill_document_task(self, doc_id: str, raw_text: str):
     try:
         # Force reset state to re-done so pipeline can re-index
         factory = StorageFactory.from_env()
-        factory.clickhouse.transition_state(doc_id, None, "er_done")
+        factory.postgres.transition_state(doc_id, None, "er_done")
         result = pipeline.run(doc_id=doc_id, raw_text=raw_text, owner_id="backfill")
         return result
     except Exception as exc:

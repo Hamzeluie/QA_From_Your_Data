@@ -1,4 +1,9 @@
-DB_DATA_DIR = /home/mehdi/Documents/projects/knowledge_graph_examples/QA_From_Your_Data/checkpoints/db
+# Load DB_DATA_DIR from .env so Make and Docker Compose never drift apart.
+# Falls back to a local relative path if .env is missing or the key isn't found.
+DB_DATA_DIR := $(shell grep -s '^DB_DATA_DIR=' .env | cut -d '=' -f2-)
+ifndef DB_DATA_DIR
+    DB_DATA_DIR := ./checkpoints/db
+endif
 
 .PHONY: help setup up down restart status logs pull clean
 
@@ -21,7 +26,7 @@ setup:
 	@mkdir -p $(DB_DATA_DIR)/neo4j/logs
 	@mkdir -p $(DB_DATA_DIR)/qdrant
 	@mkdir -p $(DB_DATA_DIR)/elasticsearch
-	@mkdir -p $(DB_DATA_DIR)/clickhouse
+	@mkdir -p $(DB_DATA_DIR)/postgres
 	@mkdir -p $(DB_DATA_DIR)/redis
 	@echo "🔒 Fixing Elasticsearch directory permissions..."
 	@sudo chown -R 1000:1000 $(DB_DATA_DIR)/elasticsearch
@@ -54,8 +59,10 @@ logs:
 	docker compose logs -f
 
 clean:
-	@echo "⚠️  WARNING: This will DELETE ALL DATA!"
+	@echo "⚠️  WARNING: This will DELETE ALL DATA in $(DB_DATA_DIR)!"
 	@read -p "Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted."; exit 1)
+	@test -n "$(DB_DATA_DIR)" || (echo "DB_DATA_DIR is empty! Aborting."; exit 1)
+	@test "$(DB_DATA_DIR)" != "/" || (echo "Refusing to delete root! Aborting."; exit 1)
 	docker compose down -v
-	rm -rf $(DB_DATA_DIR)/*
+	rm -rf $(DB_DATA_DIR)/neo4j $(DB_DATA_DIR)/qdrant $(DB_DATA_DIR)/elasticsearch $(DB_DATA_DIR)/postgres $(DB_DATA_DIR)/redis
 	@echo "✅ Cleanup complete."

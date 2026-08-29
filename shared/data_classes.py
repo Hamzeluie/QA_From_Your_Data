@@ -46,9 +46,59 @@ class EntityLabels(str, Enum):
     PER = "PERSON"
     ORG = "ORGANIZATION"
     LOC = "LOCATION"
+    FAC = "FACILITY"          # Buildings, airports, highways
+    PRODUCT = "PRODUCT"
+    EVENT = "EVENT"
+    WORK_OF_ART = "WORK_OF_ART"
+    LAW = "LAW"
+    LANGUAGE = "LANGUAGE"
+    DATE = "DATE"
     TIME = "TIME"
-    NUM = "NUMBER"
+    PERCENT = "PERCENT"
+    MONEY = "MONEY"
+    QUANTITY = "QUANTITY"
+    ORDINAL = "ORDINAL"
+    CARDINAL = "CARDINAL"
+    NORP = "NORP"             # Nationalities, religious/political groups
     MISC = "MISCELLANEOUS"
+    TECHNOLOGY = "TECHNOLOGY"
+    NUM = "NUMBER"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if not isinstance(value, str):
+            return None
+        # Normalize common NER label variants (spaCy, etc.)
+        mapping = {
+            "PER": cls.PER,
+            "PERSON": cls.PER,
+            "ORG": cls.ORG,
+            "ORGANIZATION": cls.ORG,
+            "LOC": cls.LOC,
+            "LOCATION": cls.LOC,
+            "FAC": cls.FAC,
+            "FACILITY": cls.FAC,
+            "PRODUCT": cls.PRODUCT,
+            "EVENT": cls.EVENT,
+            "WORK_OF_ART": cls.WORK_OF_ART,
+            "LAW": cls.LAW,
+            "LANGUAGE": cls.LANGUAGE,
+            "DATE": cls.DATE,
+            "TIME": cls.TIME,
+            "PERCENT": cls.PERCENT,
+            "MONEY": cls.MONEY,
+            "QUANTITY": cls.QUANTITY,
+            "ORDINAL": cls.ORDINAL,
+            "CARDINAL": cls.CARDINAL,
+            "NORP": cls.NORP,
+            "MISC": cls.MISC,
+            "MISCELLANEOUS": cls.MISC,
+            "TECHNOLOGY": cls.TECHNOLOGY,
+            "NUM": cls.NUM,
+            "NUMBER": cls.NUM,
+        }
+        return mapping.get(value.upper())
+
 
 
 class Entity(BaseModel):

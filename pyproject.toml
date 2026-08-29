@@ -2,7 +2,7 @@
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "neo4j: marks tests that require a running Neo4j instance",
-    "clickhouse: marks tests that require a running ClickHouse instance",
+    "postgres: marks tests that require PostgreSQL",
     "qdrant: marks tests that require a running Qdrant instance",
     "elasticsearch: marks tests that require a running Elasticsearch instance",
     "redis: marks tests that require a running Redis instance",

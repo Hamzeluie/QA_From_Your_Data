@@ -34,20 +34,24 @@ services:
       - xpack.security.enabled=false
       - xpack.security.http.ssl.enabled=false
       - xpack.security.transport.ssl.enabled=false
+      - ingest.geoip.downloader.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
       - ${DB_DATA_DIR}/elasticsearch:/usr/share/elasticsearch/data
     networks:
       - kg_network
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:21.3
-    container_name: kg_clickhouse
+  postgres:
+    image: postgres:16-alpine
+    container_name: kg_postgres
+    environment:
+      POSTGRES_USER: kg_user
+      POSTGRES_PASSWORD: kg_pass
+      POSTGRES_DB: knowledge_graph
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "5432:5432"
     volumes:
-      - ${DB_DATA_DIR}/clickhouse:/var/lib/clickhouse
+      - ${DB_DATA_DIR}/postgres:/var/lib/postgresql/data
     networks:
       - kg_network
 

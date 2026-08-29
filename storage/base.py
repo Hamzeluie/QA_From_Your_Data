@@ -191,6 +191,8 @@ class AbstractStateStore(ABC):
     def get_documents_by_state(self, status: str, limit: int = 100) -> List[Dict]:
         """For backfill / reprocessing jobs."""
 
+    @abstractmethod
+    def close(self) -> None: ...
 
 class AbstractCache(ABC):
     """Redis abstraction: alias cache, candidate cache, distributed locks, pub/sub."""

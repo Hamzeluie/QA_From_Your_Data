@@ -54,13 +54,13 @@ class IngestionPipeline:
         For async production use, call this from a Celery task.
         """
         # 1. Document state: uploaded
-        existing = self.factory.clickhouse.get_document_state(doc_id)
+        existing = self.factory.postgres.get_document_state(doc_id)
         if existing and existing.get("status") == "indexed":
             logger.info(f"Document {doc_id} already indexed; skipping.")
             return {"status": "skipped", "reason": "already_indexed", "doc_id": doc_id}
 
         if not existing:
-            self.factory.clickhouse.create_document(doc_id, owner_id)
+            self.factory.postgres.create_document(doc_id, owner_id)
 
         # 2. Entity Resolution (NER + Coref + ER + Cross-doc + Merge)
         chunk_info, clean_df, review_df = self.resolver.process_document(
@@ -76,7 +76,7 @@ class IngestionPipeline:
         self._index_chunks(chunk_info)
 
         # 5. Final state
-        self.factory.clickhouse.transition_state(doc_id, "re_done", "indexed")
+        self.factory.postgres.transition_state(doc_id, "re_done", "indexed")
 
         return {
             "status": "success",

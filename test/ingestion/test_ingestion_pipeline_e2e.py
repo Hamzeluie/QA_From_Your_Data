@@ -62,14 +62,14 @@ class TestIngestionPipelineE2E:
         assert result["status"] == "success"
         assert result["doc_id"] == doc_id
         assert result["resolved_count"] > 0
-        # Verify ClickHouse state
-        state = pipeline.factory.clickhouse.get_document_state(doc_id)
+        # Verify Postgres state
+        state = pipeline.factory.postgres.get_document_state(doc_id)
         assert state["status"] == "indexed"
 
     def test_idempotent_skip_already_indexed(self, pipeline, tid):
         doc_id = f"e2e_idem_{tid}"
-        pipeline.factory.clickhouse.create_document(doc_id, "u1")
-        pipeline.factory.clickhouse.transition_state(doc_id, "uploaded", "indexed")
+        pipeline.factory.postgres.create_document(doc_id, "u1")
+        pipeline.factory.postgres.transition_state(doc_id, "uploaded", "indexed")
 
         result = pipeline.run(doc_id=doc_id, raw_text="any", owner_id="u1")
         assert result["status"] == "skipped"
@@ -90,7 +90,7 @@ class TestIngestionPipelineE2E:
             result = pipeline.run(doc_id=doc_id, raw_text=text, owner_id="u1")
 
         assert result["review_count"] > 0
-        state = pipeline.factory.clickhouse.get_document_state(doc_id)
+        state = pipeline.factory.postgres.get_document_state(doc_id)
         assert state["status"] == "review_pending"
 
     def test_chunk_indexing_creates_vectors_and_es_docs(self, pipeline, tid, mock_embedder):
