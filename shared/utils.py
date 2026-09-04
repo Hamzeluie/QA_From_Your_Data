@@ -4,7 +4,7 @@ import re
 import requests
 import json
 from datetime import datetime, timedelta
-from shared.data_classes import ResolvedEntity, DisambiguationStatus, EntityLabels
+from shared.data_classes import Entity, DisambiguationStatus, EntityLabels
 from sentence_transformers import SentenceTransformer
 import spacy
 from config.settings import settings
@@ -25,6 +25,84 @@ def jaccard_similarity(text1: str, text2: str) -> float:
     union = len(words1 | words2)
     return intersection / union if union > 0 else 0.0
 
+def jaro_winkler(text1: str, text2: str, p: float = 0.1) -> float:
+    """
+    Calculate the Jaro-Winkler similarity between two strings.
+    
+    :param text1: First input string.
+    :param text2: Second input string.
+    :param p: Constant scaling factor for how much the score is boosted for common prefixes.
+              Standard is 0.1. Should not exceed 0.25.
+    :return: Similarity score between 0.0 (no similarity) and 1.0 (exact match).
+    """
+    # Edge cases
+    if text1 == text2:
+        return 1.0
+    
+    len1, len2 = len(text1), len(text2)
+    if len1 == 0 or len2 == 0:
+        return 0.0
+
+    # 1. Calculate the maximum matching window
+    match_distance = max(len1, len2) // 2 - 1
+    if match_distance < 0:
+        match_distance = 0
+
+    s1_matches = [False] * len1
+    s2_matches = [False] * len2
+
+    matches = 0
+    transpositions = 0
+
+    # 2. Find matching characters
+    for i in range(len1):
+        start = max(0, i - match_distance)
+        end = min(i + match_distance + 1, len2)
+
+        for j in range(start, end):
+            # If already matched or characters don't match, skip
+            if s2_matches[j] or text1[i] != text2[j]:
+                continue
+            
+            s1_matches[i] = True
+            s2_matches[j] = True
+            matches += 1
+            break
+
+    # If there are no matches, similarity is 0
+    if matches == 0:
+        return 0.0
+
+    # 3. Count transpositions
+    k = 0
+    for i in range(len1):
+        if not s1_matches[i]:
+            continue
+        while not s2_matches[k]:
+            k += 1
+        if text1[i] != text2[k]:
+            transpositions += 1
+        k += 1
+
+    # 4. Calculate Jaro similarity
+    jaro = (
+        (matches / len1) + 
+        (matches / len2) + 
+        ((matches - transpositions / 2) / matches)
+    ) / 3
+
+    # 5. Calculate common prefix (Winkler modification)
+    # The prefix is limited to a maximum of 4 characters
+    prefix_len = 0
+    for i in range(min(len1, len2, 4)):
+        if text1[i] == text2[i]:
+            prefix_len += 1
+        else:
+            break
+
+    # 6. Calculate final Jaro-Winkler similarity
+    return jaro + (prefix_len * p * (1 - jaro))
+
 def levenshtein_ratio(s1: str, s2: str) -> float:
     def _dist(a, b):
         if len(a) < len(b): return _dist(b, a)
@@ -44,7 +122,60 @@ def format_data(df):
     my_dict = {row["original_text"]: {"canonical_name": row["canonical_name"], "entity_label": row["entity_label"], "aliases": [], "context_indicators": [], "related_to": [], "fetch_wiki": True, "wiki_summary": row["wiki_summary"], "wiki_url": row["wiki_url"]} for _, row in df.iterrows()}
     return json.dumps(my_dict, indent=4)
 
-def semantic_sentence_chunk(text, model:SentenceTransformer, nlp:spacy=None, use_nlp:bool=False, threshold:float=0.1):
+
+def _regex_sentence_spans(text: str) -> List[Tuple[str, int, int]]:
+    """Return (sentence_text, start, end) tuples with exact offsets into `text`."""
+    pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])|\.(?=[A-Z])')
+    spans = []
+    last = 0
+    for m in pattern.finditer(text):
+        sent = text[last:m.start()]
+        if sent.strip():
+            spans.append((sent, last, m.start()))
+        last = m.end()
+    tail = text[last:]
+    if tail.strip():
+        spans.append((tail, last, len(text)))
+    return spans
+
+def _finalize_chunk(text: str, group: List[Tuple[str, int, int]]) -> Dict:
+    start = group[0][1]
+    end = group[-1][2]
+    return {"text": text[start:end], "start": start, "end": end}
+
+def semantic_sentence_chunk(text, embed_model, nlp=None, use_nlp=False, threshold=0.1) -> List[Dict]:
+    if use_nlp and nlp is not None:
+        try:
+            doc = nlp(text)
+            sent_spans = [(s.text, s.start_char, s.end_char) for s in doc.sents if s.text.strip()]
+        except Exception:
+            sent_spans = _regex_sentence_spans(text)
+    else:
+        sent_spans = _regex_sentence_spans(text)
+
+    if not sent_spans:
+        return []
+
+    sentences = [s[0] for s in sent_spans]
+    embeddings = embed_model.encode(sentences)
+
+    chunks = []
+    current_group = [sent_spans[0]]
+
+    for i in range(1, len(sent_spans)):
+        sim = sk_cosine_similarity([embeddings[i - 1]], [embeddings[i]])[0][0]
+        if sim >= threshold:
+            current_group.append(sent_spans[i])
+        else:
+            chunks.append(_finalize_chunk(text, current_group))
+            current_group = [sent_spans[i]]
+
+    if current_group:
+        chunks.append(_finalize_chunk(text, current_group))
+
+    return chunks
+
+def semantic_sentence_chunk_v1(text, embed_model:SentenceTransformer, nlp:spacy=None, use_nlp:bool=False, threshold:float=0.1):
     # Split sentences (handles ".He" in raw text)
     
     if use_nlp and nlp is not None:
@@ -54,14 +185,13 @@ def semantic_sentence_chunk(text, model:SentenceTransformer, nlp:spacy=None, use
         except:
             sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])|\.(?=[A-Z])', text)
     else:
-        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])|\.(?=[A-Z])', text)
-    
-    sentences = [s.strip() for s in sentences if s.strip()]
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])|\.(?=[A-Z])', text)    
+    # sentences = [s.strip() for s in sentences if s.strip()]
 
     if not sentences:
         return []
 
-    embeddings = model.encode(sentences)
+    embeddings = embed_model.encode(sentences)
 
     chunks = []
     current_chunk = [sentences[0]]
@@ -431,7 +561,7 @@ class WikipediaEntitySummarizer:
     def summarize(self,
                   entity: str,
                   context: str,
-                  ner_label: Optional[str] = None) -> Optional[ResolvedEntity]:
+                  ner_label: Optional[str] = None) -> Optional[Entity]:
         candidates = self.search_wikipedia(entity)
         if not candidates:
             return None
@@ -456,7 +586,7 @@ class WikipediaEntitySummarizer:
         else:
             status = DisambiguationStatus.UNKNOWN
 
-        return ResolvedEntity(
+        return Entity(
             original_text=entity,
             canonical_name=best["title"],
             entity_label=wiki_inferred_label,
@@ -475,7 +605,7 @@ class WikipediaEntitySummarizer:
     def _summarize(self,
                   entity: str,
                   context: str,
-                  ner_label: Optional[str] = None) -> Optional[ResolvedEntity]:
+                  ner_label: Optional[str] = None) -> Optional[Entity]:
         candidates = self.search_wikipedia(entity)
         if not candidates:
             return None
@@ -500,7 +630,7 @@ class WikipediaEntitySummarizer:
             needs_review = True
 
             
-        return ResolvedEntity(
+        return Entity(
             original_text=entity,
             canonical_name=best["title"],
             entity_label=ner_label or "UNKNOWN",

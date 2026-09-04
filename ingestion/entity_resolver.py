@@ -10,7 +10,7 @@ import json
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 import pandas as pd
-from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
+from QA_From_Your_Data.ingestion.models.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
 import spacy
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from config.settings import settings
@@ -740,12 +740,7 @@ class EntityResolver:
             chunk_info.append((chunk["chunk_id"], chunk["chunk_text"]))
             all_entities.extend(chunk["entities"])
 
-        return all_entities, chunk_info
-    
-    def _extract_entities_with_coref(self, document:str):
-        entity_extracted = self._name_entity_recognition(document)
-        all_entities, chunk_info = self._chunk_entity_splitter(entity_extracted)
-        return self.coref.resolve_from_sentences(document, all_entities), chunk_info
+        entences(document, all_entities), chunk_info
         
     def process_document(self, document: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -889,7 +884,6 @@ class EntityResolver:
         print(f"[User Feedback] -> '{canonical}' "
               f"({entity_label}) registered with {len(alias_list)} alias(es).")
     
- 
     def save_full_state(self,
                         path: str,
                         clean_df: pd.DataFrame = None,
@@ -1073,6 +1067,23 @@ class EntityResolver:
     def get_all_catalogs(self) -> pd.DataFrame:
         """Alias for get_entity_clusters()."""
         return self.catalog.stats()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

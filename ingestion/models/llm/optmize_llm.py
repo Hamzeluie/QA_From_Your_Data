@@ -1,6 +1,6 @@
 import dspy
-from QA_From_Your_Data.ingestion.llm.llm_extractors import NERExtraction
-from QA_From_Your_Data.ingestion.llm.llm_evaluation import ner_gepa_metric
+from QA_From_Your_Data.ingestion.models.llm.llm_extractors import NERExtraction
+from QA_From_Your_Data.ingestion.models.llm.llm_evaluation import ner_gepa_metric
 
 
 def optimize_ner(train_data, save_dir:str="./optimized_ner.json"):

@@ -21,7 +21,7 @@ def _get_relation_extractor():
     Example: from ingestion.llm.relation_extractor import RelationExtractor
     """
     try:
-        from ingestion.llm.llm_extractors import RelationExtractor
+        from QA_From_Your_Data.ingestion.models.llm.llm_extractors import RelationExtractor
         return RelationExtractor(use_cot=True)
     except ImportError:
         # Fallback stub so Celery doesn't crash on import if you haven't created it yet

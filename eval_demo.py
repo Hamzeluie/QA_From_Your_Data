@@ -6,7 +6,7 @@ This shows how to plug the evaluation metrics into your existing code.
 """
 
 import json
-from QA_From_Your_Data.ingestion.llm.llm_evaluation import (
+from QA_From_Your_Data.ingestion.models.llm.llm_evaluation import (
     StandardNEREvaluator,
     GEPANEREvaluator,
     ner_f1_metric,
@@ -154,7 +154,7 @@ def evaluate_per_chunk(data, ner_module, chunker):
 
 if __name__ == "__main__":
     # Replace with your actual module
-    from QA_From_Your_Data.ingestion.llm.llm_extractors import NERExtraction, NERWithConfidence, semantic_sentence_chunk
+    from QA_From_Your_Data.ingestion.models.llm.llm_extractors import NERExtraction, NERWithConfidence, semantic_sentence_chunk
     ner = NERExtraction(use_cot=True)
 
     data_path = "/home/mehdi/Documents/projects/knowledge_graph_examples/datasets/QA_your_data/ner_dataset.jsonl"

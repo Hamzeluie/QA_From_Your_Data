@@ -28,6 +28,7 @@ env/
 # 3. PROJECT-SPECIFIC: CHECKPOINTS & MODELS
 # ==========================================
 # Ignore heavy model weights and cached downloads
+checkpoints/bert_models/
 checkpoints/all-MiniLM-L6-v2/
 checkpoints/en_core_web_sm/en_core_web_sm-3.8.0/
 checkpoints/models--*/

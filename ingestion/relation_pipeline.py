@@ -11,7 +11,7 @@ from dataclasses import fields
 import pandas as pd
 
 from storage.factory import StorageFactory
-from shared.data_classes import Relation
+from shared.data_classes import Relation, RelationLabels, EntityLabels
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class RelationPipeline:
     """
     Production relation extraction.
     Groups resolved entities by sentence, calls LLM extractor,
-    dedups symmetric predicates, and persists to Neo4j + ClickHouse.
+    dedups symmetric predicates, and persists to Neo4j + postgres.
     """
 
     def __init__(
@@ -32,14 +32,6 @@ class RelationPipeline:
         self.extractor = extractor
         self.factory = factory or StorageFactory.from_env()
         self.include_literals = include_literals
-        self.literal_labels = {
-            "DATE", "TIME", "MONEY", "PERCENT", "NUM",
-            "CARDINAL", "ORDINAL", "QUANTITY",
-        }
-        self.symmetric_preds = {
-            "spouse", "married_to", "sibling",
-            "collaborates_with", "co_founder", "partner",
-        }
 
     def extract_and_store(self, clean_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -78,7 +70,7 @@ class RelationPipeline:
                 canon = row["canonical_name"]
                 label = str(row.get("entity_label", "UNKNOWN")).upper()
 
-                if not self.include_literals and label in self.literal_labels:
+                if not self.include_literals and EntityLabels.is_valid(label):
                     continue
                 if canon in seen_canons:
                     continue
@@ -106,7 +98,7 @@ class RelationPipeline:
                 pred = rel["predicate"]
 
                 # Normalize symmetric so (A,spouse,B) == (B,spouse,A)
-                if pred in self.symmetric_preds and obj < subj:
+                if RelationLabels.is_valid(pred) and obj < subj:
                     subj, obj = obj, subj
 
                 relation_id = self._make_relation_id(str(doc_id), subj, pred, obj)
@@ -165,3 +157,6 @@ class RelationPipeline:
     def _make_relation_id(doc_id: str, subject: str, predicate: str, obj: str) -> str:
         key = f"{doc_id}|{subject}|{predicate}|{obj}"
         return hashlib.sha1(key.encode("utf-8")).hexdigest()
+    
+    
+    

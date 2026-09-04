@@ -11,7 +11,7 @@ import json
 from sentence_transformers import SentenceTransformer
 from shared.utils import semantic_sentence_chunk
 from ingestion.entity_resolver import NERExtractor, CorefResolver
-from ingestion.llm.llm_extractors import RelationResolver
+from QA_From_Your_Data.ingestion.models.llm.llm_extractors import RelationResolver
 
 
 # 1. Initialize models

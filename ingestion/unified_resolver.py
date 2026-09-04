@@ -12,11 +12,11 @@ from pathlib import Path
 import pandas as pd
 import spacy
 from sentence_transformers import SentenceTransformer
-from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
+from ingestion.models.base import IExtractor
 from storage.factory import StorageFactory
 from ingestion.candidate_finder import CandidateFinder
 from shared.data_classes import (
-    EntityLabels, DisambiguationStatus, ResolvedEntity, Chunk, CandidateResult
+    EntityLabels, DisambiguationStatus, Chunk, CandidateResult, Entity
 )
 from shared.utils import (
     WikipediaEntitySummarizer, ValueNormalizer, semantic_sentence_chunk, NON_LINKABLE_TYPES
@@ -35,12 +35,12 @@ class UnifiedEntityResolver:
 
     def __init__(
         self,
+        ner_model:IExtractor,
+        coref_model:IExtractor,
         factory: Optional[StorageFactory] = None,
         embedder=None,
         merge_threshold: float = 0.88,
         cross_doc_threshold: float = 0.82,
-        use_ner_with_confidence: bool = False,
-        use_cot: bool = True,
         run_demo: bool = False,
     ):
         self.factory = factory or StorageFactory.from_env()
@@ -56,11 +56,12 @@ class UnifiedEntityResolver:
         self.wiki = WikipediaEntitySummarizer(self.embedder)
 
         self.nlp = spacy.load(settings.SPACY_MODEL_PATH)
+        
         if run_demo == False:
-            self.ner_llm = NERWithConfidence() if use_ner_with_confidence else NERExtractor(use_cot=use_cot)
-            self.coref = CorefResolver(self.nlp, mode="nlp")
+            self.ner = ner_model
+            self.coref = coref_model
         else:
-            self.ner_llm = None
+            self.ner = None
             self.coref = None
 
         self.merge_threshold = merge_threshold
@@ -83,10 +84,10 @@ class UnifiedEntityResolver:
 
         # 2. NER + Coref (your existing logic)
         if self.run_demo:
-            chunk_info, entities_df = self._fake_ner_for_structure(doc_id, document)
+            chunk_info, entities = self._fake_ner_for_structure(doc_id, document)
         else:
-            entities_df, chunk_info = self._extract_entities_with_coref(document)
-            entities_df = self._remove_subsumed_entities(entities_df)
+            entities, chunk_info = self._extract_entities_with_coref(document)
+            entities = self._remove_subsumed_entities(entities)
         # ---
 
         self.factory.postgres.transition_state(doc_id, "uploaded", "ner_done")
@@ -192,30 +193,28 @@ class UnifiedEntityResolver:
 
         logger.info(f"[User Feedback] '{canonical}' ({entity_label.value}) registered. Outbox will sync to ES/Qdrant.")
 
-    # ── NED + Coreference Resolution ─────────────────────────────────────────────────────
-     
-    def _name_entity_recognition(self, doc:str)-> List[Dict]:
+    # ── NED + Coreference Resolution ─────────────────────────────────────────────────────    
+    def _name_entity_recognition(self, doc: str) -> List[Entity]:
         all_preds = []
-        char_offset = 0
-        
-        for idx, chunk in enumerate(semantic_sentence_chunk(doc)):
-            result = self.ner_llm(chunk)
-            chunk = result['sentence']
-            
-            chunk_pred = {}
-            chunk_ents = []           
-            chunk_pred["chunk_text"] = chunk
-            chunk_pred["chunk_id"] = idx + 1
-            
-            # CRITICAL: Adjust offsets to document-level
-            for ent in result.get("entities", []):
-                ent.start += char_offset
-                ent.end += char_offset
-                chunk_ents.append(ent)                
 
-            char_offset += len(chunk) + 1
-            chunk_pred["entities"] = chunk_ents
+        for idx, chunk_info in enumerate(semantic_sentence_chunk(doc, self.embedder)):
+            chunk = chunk_info["text"]
+            offset = chunk_info["start"]  # exact, no drift
+
+            result = self.ner(chunk)
+            chunk_pred = {
+                "chunk_text": chunk,
+                "chunk_id": idx + 1,
+                "entities": [],
+            }
+
+            for ent in result:
+                ent.start += offset
+                ent.end += offset
+                chunk_pred["entities"].append(ent)
+
             all_preds.append(chunk_pred)
+
         return all_preds
     
     def _chunk_entity_splitter(self, ner_result:list[Dict]):
@@ -227,18 +226,18 @@ class UnifiedEntityResolver:
 
         return all_entities, chunk_info
     
-    def _extract_entities_with_coref(self, document:str):
+    def _extract_entities_with_coref(self, doc_id: str, document: str, owner_id: str):
         entity_extracted = self._name_entity_recognition(document)
         all_entities, chunk_info = self._chunk_entity_splitter(entity_extracted)
-        return self.coref.resolve_from_sentences(document, all_entities), chunk_info
+        return self.coref.extract(document, all_entities), chunk_info
     
-    def _remove_subsumed_entities(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _remove_subsumed_entities(self, entities: List[Entity]) -> List[Entity]:
         """
         Drop entities whose character span is fully contained inside a larger
         entity span in the same document. Prefer longer spans.
         """
-        if df.empty:
-            return df
+        if not entities:
+            return entities
 
         rows = df.to_dict("records")
 
@@ -271,7 +270,7 @@ class UnifiedEntityResolver:
     
     # ── Resolution Logic ─────────────────────────────────────────────────────
 
-    def _resolve_entity(self, row: pd.Series) -> ResolvedEntity:
+    def _resolve_entity(self, row: pd.Series) -> Entity:
         entity_text = row["text"]
         entity_label = row["label"]
         sentence = row["mention_sentence"]
@@ -286,7 +285,7 @@ class UnifiedEntityResolver:
         if cached_canon:
             node = self.factory.neo4j.find_by_canonical(cached_canon)
             if node:
-                return ResolvedEntity(
+                return Entity(
                     original_text=entity_text,
                     canonical_name=node["canonical"],
                     entity_label=node["label"],
@@ -314,7 +313,7 @@ class UnifiedEntityResolver:
                         summary=wiki.summary or "",
                         aliases=[wiki.original_text, wiki.canonical_name],
                     )
-                    return ResolvedEntity(
+                    return Entity(
                         original_text=entity_text,
                         canonical_name=wiki.canonical_name,
                         entity_label=EntityLabels(wiki.entity_label),
@@ -326,7 +325,7 @@ class UnifiedEntityResolver:
                         needs_review=False,
                     )
 
-            return ResolvedEntity(
+            return Entity(
                 original_text=entity_text,
                 canonical_name=entity_text,
                 entity_label=entity_label,
@@ -349,7 +348,7 @@ class UnifiedEntityResolver:
         entity_label_hint: Optional[str],
         context: str,
         candidates: List[CandidateResult],
-    ) -> ResolvedEntity:
+    ) -> Entity:
         # Single candidate fast path
         if len(candidates) == 1:
             cand = candidates[0]
@@ -363,7 +362,7 @@ class UnifiedEntityResolver:
                 conf = cand.match_score
                 needs_review = True
 
-            return ResolvedEntity(
+            return Entity(
                 original_text=entity_text,
                 canonical_name=cand.canonical,
                 entity_label=cand.label,
@@ -384,7 +383,7 @@ class UnifiedEntityResolver:
         else:
             status = DisambiguationStatus.AMBIGUOUS
 
-        return ResolvedEntity(
+        return Entity(
             original_text=entity_text,
             canonical_name=best.canonical,
             entity_label=best.label,
@@ -397,7 +396,7 @@ class UnifiedEntityResolver:
             needs_review=not (label_match and best.match_score > 0.88),
         )
 
-    def _cross_doc_resolve(self, unresolved: List[ResolvedEntity]) -> List[ResolvedEntity]:
+    def _cross_doc_resolve(self, unresolved: List[Entity]) -> List[Entity]:
         """Qdrant semantic search for unresolved mentions."""
         if not self.embedder:
             return unresolved
@@ -457,7 +456,7 @@ class UnifiedEntityResolver:
         # ... (keep your existing MONEY/DATE/TIME normalization logic) ...
         if label == "MONEY":
             normalized = ValueNormalizer.normalize_money(text)
-            return ResolvedEntity(
+            return Entity(
                 original_text=text, canonical_name=normalized["canonical"],
                 entity_label=label, mention_sentence=sentence,
                 confidence=confidence, status=DisambiguationStatus.RESOLVED,
@@ -465,7 +464,7 @@ class UnifiedEntityResolver:
             )
         elif label == "DATE":
             normalized = ValueNormalizer.normalize_date(text)
-            return ResolvedEntity(
+            return Entity(
                 original_text=text, canonical_name=normalized["canonical"],
                 entity_label=label, mention_sentence=sentence,
                 confidence=confidence, status=DisambiguationStatus.RESOLVED,
@@ -474,14 +473,14 @@ class UnifiedEntityResolver:
             
         # elif label == "TIME":
         #     normalized = ValueNormalizer.normalize_time(text)
-        #     return ResolvedEntity(
+        #     return Entity(
         #         original_text=text, canonical_name=normalized["canonical"],
         #         entity_label=label, mention_sentence=sentence,
         #         confidence=confidence, status=DisambiguationStatus.RESOLVED,
         #         source="normalized", needs_review=False,
         #     )
         # ... etc ...
-        return ResolvedEntity(
+        return Entity(
             original_text=text, canonical_name=text, entity_label=label,
             mention_sentence=sentence, confidence=confidence,
             status=DisambiguationStatus.RESOLVED, source="normalized", needs_review=False,
@@ -503,3 +502,19 @@ class UnifiedEntityResolver:
             "mention_sentence": document, "confidence": 1.0
         }])
         return chunks, df
+    
+    
+if __name__ == "__main__":
+    from ingestion.models.factory import get_ner_extractor, get_coref_resolver
+    
+    ner = get_ner_extractor(model_name=settings.BERT_NER_MODEL_NAME, local_dir=str(Path(settings.BERT_MODEL_PATH) / "ner"), use_onnx=True, onnx_dir=str(Path(settings.BERT_ONNX_MODEL_PATH) / "onnx_models" / "ner"))
+    coref = get_coref_resolver()
+
+    resolver = UnifiedEntityResolver(ner_model=ner, coref_model=coref)  # Assuming UnifiedResolver is the class name
+    doc_id = "doc1"
+    record = {"doc_id": 6, "document": "Ezri Dax ( ) is a fictional character who appears in the of the American science fiction TV series .Portrayed by Nicole de Boer , she is a counselor aboard the Bajoran space station Deep Space Nine .The character is a member of the Trill species , and is formed of both a host and a symbiont – referred to as Dax .Ezri was introduced to the series following the death of the previous Dax host , Jadzia ( Terry Farrell ) at the end of .It had been the producers ' intention to introduce a new female character bearing the symbiont in order to ensure that Nana Visitor as Kira Nerys was not the only female member of the main cast .There were difficulties in casting initially , and the character changed from one who was intended to be \" spooky \" to one that was struggling to deal with all her previous personalities as a result of unexpectedly taking on the Dax symbiont .De Boer was not considered for the part until co - producer Hans Beimler suggested that she should submit an audition tape , which resulted in her invitation to meet with the producers in Los Angeles and in her gaining the role .The character made her first appearance in the first episode of the seventh season , \" Image in the Sand \" .The character continued to appear throughout the final season of the series , with her final appearance in the series finale \" What You Leave Behind \" .Her character stepped into the void left by Jadzia amongst the crew , but found that she had to redevelop those previous relationships and learn to get along with Jadzia 's widower , Worf ( Michael Dorn ) .During the course of the season , Ezri becomes less nervous of her role over time and learns from the Dax symbiont and becomes involved romantically with Dr. Julian Bashir ( Alexander Siddig ) .The fan reaction to the character was reported as positive , but several of the Ezri - centric episodes came in for criticism , with producer Ira Steven Behr apologising to de Boer for \" \" – an episode described as \" just a mess \" by writer Ronald D. Moore .The relationship between Ezri and both Worf and Bashir was described as one of five \" great geek TV love triangles \" .The inclusion of the character was criticised on the internet , with Ezri being referred to as both an \" ill - conceived idea \" and a \" replacement Dax \" .", "sentence": [["Ezri", "Dax", "(", ")", "is", "a", "fictional", "character", "who", "appears", "in", "the", "of", "the", "American", "science", "fiction", "TV", "series", "."], ["Portrayed", "by", "Nicole", "de", "Boer", ",", "she", "is", "a", "counselor", "aboard", "the", "Bajoran", "space", "station", "Deep", "Space", "Nine", "."], ["The", "character", "is", "a", "member", "of", "the", "Trill", "species", ",", "and", "is", "formed", "of", "both", "a", "host", "and", "a", "symbiont", "–", "referred", "to", "as", "Dax", "."], ["Ezri", "was", "introduced", "to", "the", "series", "following", "the", "death", "of", "the", "previous", "Dax", "host", ",", "Jadzia", "(", "Terry", "Farrell", ")", "at", "the", "end", "of", "."], ["It", "had", "been", "the", "producers", "'", "intention", "to", "introduce", "a", "new", "female", "character", "bearing", "the", "symbiont", "in", "order", "to", "ensure", "that", "Nana", "Visitor", "as", "Kira", "Nerys", "was", "not", "the", "only", "female", "member", "of", "the", "main", "cast", "."], ["There", "were", "difficulties", "in", "casting", "initially", ",", "and", "the", "character", "changed", "from", "one", "who", "was", "intended", "to", "be", "\"", "spooky", "\"", "to", "one", "that", "was", "struggling", "to", "deal", "with", "all", "her", "previous", "personalities", "as", "a", "result", "of", "unexpectedly", "taking", "on", "the", "Dax", "symbiont", "."], ["De", "Boer", "was", "not", "considered", "for", "the", "part", "until", "co", "-", "producer", "Hans", "Beimler", "suggested", "that", "she", "should", "submit", "an", "audition", "tape", ",", "which", "resulted", "in", "her", "invitation", "to", "meet", "with", "the", "producers", "in", "Los", "Angeles", "and", "in", "her", "gaining", "the", "role", "."], ["The", "character", "made", "her", "first", "appearance", "in", "the", "first", "episode", "of", "the", "seventh", "season", ",", "\"", "Image", "in", "the", "Sand", "\"", "."], ["The", "character", "continued", "to", "appear", "throughout", "the", "final", "season", "of", "the", "series", ",", "with", "her", "final", "appearance", "in", "the", "series", "finale", "\"", "What", "You", "Leave", "Behind", "\"", "."], ["Her", "character", "stepped", "into", "the", "void", "left", "by", "Jadzia", "amongst", "the", "crew", ",", "but", "found", "that", "she", "had", "to", "redevelop", "those", "previous", "relationships", "and", "learn", "to", "get", "along", "with", "Jadzia", "'s", "widower", ",", "Worf", "(", "Michael", "Dorn", ")", "."], ["During", "the", "course", "of", "the", "season", ",", "Ezri", "becomes", "less", "nervous", "of", "her", "role", "over", "time", "and", "learns", "from", "the", "Dax", "symbiont", "and", "becomes", "involved", "romantically", "with", "Dr.", "Julian", "Bashir", "(", "Alexander", "Siddig", ")", "."], ["The", "fan", "reaction", "to", "the", "character", "was", "reported", "as", "positive", ",", "but", "several", "of", "the", "Ezri", "-", "centric", "episodes", "came", "in", "for", "criticism", ",", "with", "producer", "Ira", "Steven", "Behr", "apologising", "to", "de", "Boer", "for", "\"", "\"", "–", "an", "episode", "described", "as", "\"", "just", "a", "mess", "\"", "by", "writer", "Ronald", "D.", "Moore", "."], ["The", "relationship", "between", "Ezri", "and", "both", "Worf", "and", "Bashir", "was", "described", "as", "one", "of", "five", "\"", "great", "geek", "TV", "love", "triangles", "\"", "."], ["The", "inclusion", "of", "the", "character", "was", "criticised", "on", "the", "internet", ",", "with", "Ezri", "being", "referred", "to", "as", "both", "an", "\"", "ill", "-", "conceived", "idea", "\"", "and", "a", "\"", "replacement", "Dax", "\"", "."]], "label_sents": [[{"name": "Ezri Dax", "sent_id": 0, "pos": [0, 2], "type": "PER"}, {"name": "Ezri", "sent_id": 3, "pos": [0, 1], "type": "PER"}, {"name": "Ezri", "sent_id": 13, "pos": [12, 13], "type": "PER"}, {"name": "Ezri", "sent_id": 12, "pos": [3, 4], "type": "PER"}, {"name": "Ezri", "sent_id": 11, "pos": [15, 16], "type": "PER"}, {"name": "Ezri", "sent_id": 10, "pos": [7, 8], "type": "PER"}, {"name": "Ezri Dax", "sent_id": 0, "pos": [0, 2], "type": "PER"}], [{"name": "American", "sent_id": 0, "pos": [14, 15], "type": "LOC"}], [{"name": "Nicole de Boer", "sent_id": 1, "pos": [2, 5], "type": "PER"}], [{"name": "Bajoran", "sent_id": 1, "pos": [12, 13], "type": "LOC"}], [{"name": "Deep Space Nine", "sent_id": 1, "pos": [15, 18], "type": "MISC"}], [{"name": "Trill", "sent_id": 2, "pos": [7, 8], "type": "MISC"}], [{"name": "Dax", "sent_id": 10, "pos": [20, 21], "type": "MISC"}, {"name": "Dax", "sent_id": 2, "pos": [24, 25], "type": "MISC"}, {"name": "Dax", "sent_id": 5, "pos": [41, 42], "type": "MISC"}], [{"name": "Dax", "sent_id": 2, "pos": [24, 25], "type": "PER"}, {"name": "Dax", "sent_id": 3, "pos": [12, 13], "type": "PER"}, {"name": "Dax", "sent_id": 13, "pos": [29, 30], "type": "PER"}], [{"name": "Terry Farrell", "sent_id": 3, "pos": [17, 19], "type": "PER"}, {"name": "Jadzia", "sent_id": 9, "pos": [29, 30], "type": "PER"}, {"name": "Jadzia", "sent_id": 9, "pos": [8, 9], "type": "PER"}, {"name": "Jadzia", "sent_id": 3, "pos": [15, 16], "type": "PER"}], [{"name": "Nana Visitor", "sent_id": 4, "pos": [21, 23], "type": "PER"}], [{"name": "Kira Nerys", "sent_id": 4, "pos": [24, 26], "type": "PER"}], [{"name": "De Boer", "sent_id": 6, "pos": [0, 2], "type": "PER"}, {"name": "de Boer", "sent_id": 11, "pos": [31, 33], "type": "PER"}], [{"name": "Hans Beimler", "sent_id": 6, "pos": [12, 14], "type": "PER"}], [{"name": "Los Angeles", "sent_id": 6, "pos": [34, 36], "type": "LOC"}], [{"name": "Image in the Sand", "sent_id": 7, "pos": [16, 20], "type": "MISC"}], [{"name": "What You Leave Behind", "sent_id": 8, "pos": [22, 26], "type": "MISC"}], [{"name": "Worf", "sent_id": 12, "pos": [6, 7], "type": "PER"}, {"name": "Worf", "sent_id": 9, "pos": [33, 34], "type": "PER"}], [{"name": "Michael Dorn", "sent_id": 9, "pos": [35, 37], "type": "PER"}], [{"name": "Julian Bashir", "sent_id": 10, "pos": [28, 30], "type": "PER"}], [{"name": "Alexander Siddig", "sent_id": 10, "pos": [31, 33], "type": "PER"}], [{"name": "Ira Steven Behr", "sent_id": 11, "pos": [26, 29], "type": "PER"}], [{"name": "Ronald D. Moore", "sent_id": 11, "pos": [48, 51], "type": "PER"}], [{"name": "Bashir", "sent_id": 12, "pos": [8, 9], "type": "PER"}], [{"name": "five", "sent_id": 12, "pos": [14, 15], "type": "NUM"}]], "label_doc": [{"text": "Ezri Dax", "label": "PER", "start": 0, "end": 8, "sents_id": 0}, {"text": "Ezri", "label": "PER", "start": 314, "end": 318, "sents_id": 3}, {"text": "Ezri", "label": "PER", "start": 2207, "end": 2211, "sents_id": 13}, {"text": "Ezri", "label": "PER", "start": 2045, "end": 2049, "sents_id": 12}, {"text": "Ezri", "label": "PER", "start": 1842, "end": 1846, "sents_id": 11}, {"text": "Ezri", "label": "PER", "start": 1602, "end": 1606, "sents_id": 10}, {"text": "Ezri Dax", "label": "PER", "start": 0, "end": 8, "sents_id": 0}, {"text": "American", "label": "LOC", "start": 64, "end": 72, "sents_id": 0}, {"text": "Nicole de Boer", "label": "PER", "start": 113, "end": 127, "sents_id": 1}, {"text": "Bajoran", "label": "LOC", "start": 160, "end": 167, "sents_id": 1}, {"text": "Deep Space Nine", "label": "MISC", "start": 182, "end": 197, "sents_id": 1}, {"text": "Trill", "label": "MISC", "start": 232, "end": 237, "sents_id": 2}, {"text": "Dax", "label": "MISC", "start": 1670, "end": 1673, "sents_id": 10}, {"text": "Dax", "label": "MISC", "start": 309, "end": 312, "sents_id": 2}, {"text": "Dax", "label": "MISC", "start": 859, "end": 862, "sents_id": 5}, {"text": "Dax", "label": "PER", "start": 309, "end": 312, "sents_id": 2}, {"text": "Dax", "label": "PER", "start": 384, "end": 387, "sents_id": 3}, {"text": "Dax", "label": "PER", "start": 2286, "end": 2289, "sents_id": 13}, {"text": "Terry Farrell", "label": "PER", "start": 404, "end": 417, "sents_id": 3}, {"text": "Jadzia", "label": "PER", "start": 1525, "end": 1531, "sents_id": 9}, {"text": "Jadzia", "label": "PER", "start": 1406, "end": 1412, "sents_id": 9}, {"text": "Jadzia", "label": "PER", "start": 395, "end": 401, "sents_id": 3}, {"text": "Nana Visitor", "label": "PER", "start": 554, "end": 566, "sents_id": 4}, {"text": "Kira Nerys", "label": "PER", "start": 570, "end": 580, "sents_id": 4}, {"text": "De Boer", "label": "PER", "start": 873, "end": 880, "sents_id": 6}, {"text": "de Boer", "label": "PER", "start": 1935, "end": 1942, "sents_id": 11}, {"text": "Hans Beimler", "label": "PER", "start": 933, "end": 945, "sents_id": 6}, {"text": "Los Angeles", "label": "LOC", "start": 1061, "end": 1072, "sents_id": 6}, {"text": "Image in the Sand", "label": "MISC", "start": 1189, "end": 1206, "sents_id": 7}, {"text": "What You Leave Behind", "label": "MISC", "start": 1337, "end": 1358, "sents_id": 8}, {"text": "Worf", "label": "PER", "start": 2059, "end": 2063, "sents_id": 12}, {"text": "Worf", "label": "PER", "start": 1545, "end": 1549, "sents_id": 9}, {"text": "Michael Dorn", "label": "PER", "start": 1552, "end": 1564, "sents_id": 9}, {"text": "Julian Bashir", "label": "PER", "start": 1726, "end": 1739, "sents_id": 10}, {"text": "Alexander Siddig", "label": "PER", "start": 1742, "end": 1758, "sents_id": 10}, {"text": "Ira Steven Behr", "label": "PER", "start": 1904, "end": 1919, "sents_id": 11}, {"text": "Ronald D. Moore", "label": "PER", "start": 2003, "end": 2018, "sents_id": 11}, {"text": "Bashir", "label": "PER", "start": 2068, "end": 2074, "sents_id": 12}, {"text": "five", "label": "NUM", "start": 2099, "end": 2103, "sents_id": 12}]}
+
+    document = record["document"]
+    chunks, entities_df = resolver.process_document(doc_id=doc_id, document=document, owner_id="system")
+    print(chunks)
+    print(entities_df)

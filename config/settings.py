@@ -40,6 +40,12 @@ class Settings:
    DATASET_PATH = os.getenv("DATASET_PATH", "./checkpoints/ner_dataset.jsonl")
    CHECKPOINTS = os.getenv("CHECKPOINTS", "./checkpoints")
    ENTITY_RESOLUTION_STATE_PATH = os.getenv("ENTITY_RESOLUTION_STATE_PATH", "./checkpoints/entity_resolution_full_state")
+   
+   BERT_MODEL_PATH = os.getenv("BERT_MODEL_PATH", "./checkpoints/bert_models")
+   BERT_NER_MODEL_NAME = os.getenv("BERT_NER_MODEL_NAME", "Davlan/distilbert-base-multilingual-cased-ner-hrl")
+   BERT_RE_MODEL_NAME = os.getenv("BERT_RE_MODEL_NAME", "Babelscape/rebel-large")
+
+   BERT_ONNX_MODEL_PATH = os.getenv("BERT_ONNX_MODEL_PATH", "./checkpoints/bert_models/onnx_models")
 
 
 settings = Settings()
