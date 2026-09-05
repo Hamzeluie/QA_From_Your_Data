@@ -1,16 +1,7 @@
 from typing import List, Dict, Optional, Tuple, ClassVar
 import difflib
-import pandas as pd
-import numpy as np
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from pydantic import BaseModel, ConfigDict
-
-try:
-    from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
-    EMBEDDINGS_AVAILABLE = True
-except ImportError:
-    EMBEDDINGS_AVAILABLE = False
 
 
 @dataclass
@@ -20,14 +11,16 @@ class Chunk:
     owner_id: str
     sentence: str
     date_time: str
+    start_offset:int
+    end_offset:int
 
 
 class DisambiguationStatus(Enum):
     RESOLVED = "resolved"
     UNRESOLVED = "unresolved"
-    AMBIGUOUS = "ambiguous"
     NEW_ENTITY = "new_entity"
-    UNKNOWN = "unknown"
+    # AMBIGUOUS = "ambiguous"
+    # UNKNOWN = "unknown"
 
 
 @dataclass
@@ -236,226 +229,7 @@ class EntityLabels(str, Enum):
         except ValueError:
             return False
         
-class EntityLabels_v1(str, Enum):
-    PER = "PERSON"
-    ORG = "ORGANIZATION"
-    LOC = "LOCATION"
-    FAC = "FACILITY"          # Buildings, airports, highways
-    PRODUCT = "PRODUCT"
-    EVENT = "EVENT"
-    WORK_OF_ART = "WORK_OF_ART"
-    LAW = "LAW"
-    LANGUAGE = "LANGUAGE"
-    DATE = "DATE"
-    TIME = "TIME"
-    PERCENT = "PERCENT"
-    MONEY = "MONEY"
-    QUANTITY = "QUANTITY"
-    ORDINAL = "ORDINAL"
-    CARDINAL = "CARDINAL"
-    NORP = "NORP"             # Nationalities, religious/political groups
-    MISC = "MISCELLANEOUS"
-    TECHNOLOGY = "TECHNOLOGY"
-    NUM = "NUMBER"
-
-    @classmethod
-    def _missing_(cls, value: object):
-        if not isinstance(value, str):
-            return None
-        # Normalize common NER label variants (spaCy, etc.)
-        mapping = {
-            "PER": cls.PER,
-            "PERSON": cls.PER,
-            "ORG": cls.ORG,
-            "ORGANIZATION": cls.ORG,
-            "LOC": cls.LOC,
-            "LOCATION": cls.LOC,
-            "FAC": cls.FAC,
-            "FACILITY": cls.FAC,
-            "PRODUCT": cls.PRODUCT,
-            "EVENT": cls.EVENT,
-            "WORK_OF_ART": cls.WORK_OF_ART,
-            "LAW": cls.LAW,
-            "LANGUAGE": cls.LANGUAGE,
-            "DATE": cls.DATE,
-            "TIME": cls.TIME,
-            "PERCENT": cls.PERCENT,
-            "MONEY": cls.MONEY,
-            "QUANTITY": cls.QUANTITY,
-            "ORDINAL": cls.ORDINAL,
-            "CARDINAL": cls.CARDINAL,
-            "NORP": cls.NORP,
-            "MISC": cls.MISC,
-            "MISCELLANEOUS": cls.MISC,
-            "TECHNOLOGY": cls.TECHNOLOGY,
-            "NUM": cls.NUM,
-            "NUMBER": cls.NUM,
-        }
-        return mapping.get(value.upper())
-    
-    @classmethod
-    def is_valid(cls, value: str) -> bool:
-        try:
-            cls(value)
-            return True
-        except ValueError:
-            return False
-
-
-class RelationLabels_v1(str, Enum):
-    # ── Symmetric Relations ──
-    SPOUSE = "spouse"
-    MARRIED_TO = "married_to"
-    SIBLING = "sibling"
-    COLLABORATES_WITH = "collaborates_with"
-    CO_FOUNDER = "co_founder"
-    PARTNER = "partner"
-    COLLEAGUE = "colleague"
-    FRIEND = "friend"
-    INTERACTS_WITH = "interacts_with"
-
-    # ── Asymmetric / Hierarchical Relations ──
-    EMPLOYEE_OF = "employee_of"
-    MEMBER_OF = "member_of"
-    FOUNDED = "founded"
-    HEADQUARTERS = "headquarters"
-    LOCATED_IN = "located_in"
-    PARENT_COMPANY = "parent_company"
-    SUBSIDIARY = "subsidiary"
-    ACQUIRED = "acquired"
-    ACQUIRED_BY = "acquired_by"
-    AUTHOR_OF = "author_of"
-    DIRECTED_BY = "directed_by"
-    BORN_IN = "born_in"
-    DIED_IN = "died_in"
-    CAPITAL_OF = "capital_of"
-    PART_OF = "part_of"
-    CONTAINS = "contains"
-    OPERATES_IN = "operates_in"
-    WORKS_FOR = "works_for"
-
-    # ── Knowledge Graph / Wikidata Specific Relations ──
-    NO_RELATION = "no_relation"
-    APPLIES_TO_JURISDICTION = "applies_to_jurisdiction"
-    AUTHOR = "author"
-    AWARD_RECEIVED = "award_received"
-    BASIN_COUNTRY = "basin_country"
-    CAPITAL = "capital"
-    CAST_MEMBER = "cast_member"
-    CHAIRPERSON = "chairperson"
-    CHARACTERS = "characters"
-
-    # ── Fallbacks ──
-    RELATED_TO = "related_to"
-    OTHER = "other"
-
-    # Canonical symmetric values (merged from old RELATION_SYMMETRICS)
-    _SYMMETRIC: ClassVar[frozenset[str]] = frozenset({
-        "spouse", "married_to", "sibling", "collaborates_with",
-        "co_founder", "partner", "colleague", "friend",
-        "interacts_with",
-    })
-
-    @classmethod
-    def is_symmetric(cls, value: str) -> bool:
-        """Return True if *value* normalizes to a symmetric relation."""
-        try:
-            member = cls(value)
-            return member.value in cls._SYMMETRIC
-        except ValueError:
-            return False
-
-    @classmethod
-    def _missing_(cls, value: object):
-        if not isinstance(value, str):
-            return None
-
-        # Normalize spaces/hyphens to underscores so "works at" -> "works_at"
-        cleaned = value.lower().strip().replace(" ", "_").replace("-", "_")
-
-        mapping = {
-            # Symmetric
-            "spouse": cls.SPOUSE,
-            "husband": cls.SPOUSE,
-            "wife": cls.SPOUSE,
-            "married": cls.MARRIED_TO,
-            "married_to": cls.MARRIED_TO,
-            "sibling": cls.SIBLING,
-            "brother": cls.SIBLING,
-            "sister": cls.SIBLING,
-            "collaborates": cls.COLLABORATES_WITH,
-            "collaborates_with": cls.COLLABORATES_WITH,
-            "cofounder": cls.CO_FOUNDER,
-            "co_founder": cls.CO_FOUNDER,
-            "partner": cls.PARTNER,
-            "colleague": cls.COLLEAGUE,
-            "friend": cls.FRIEND,
-            "interacts_with": cls.INTERACTS_WITH,
-
-            # Asymmetric
-            "employee_of": cls.EMPLOYEE_OF,
-            "employee": cls.EMPLOYEE_OF,
-            "works_for": cls.WORKS_FOR,
-            "works_at": cls.WORKS_FOR,
-            "member_of": cls.MEMBER_OF,
-            "member": cls.MEMBER_OF,
-            "founded": cls.FOUNDED,
-            "founder": cls.FOUNDED,
-            "headquarters": cls.HEADQUARTERS,
-            "hq": cls.HEADQUARTERS,
-            "located_in": cls.LOCATED_IN,
-            "location": cls.LOCATED_IN,
-            "resides_in": cls.LOCATED_IN,
-            "parent_company": cls.PARENT_COMPANY,
-            "parent": cls.PARENT_COMPANY,
-            "subsidiary": cls.SUBSIDIARY,
-            "acquired": cls.ACQUIRED,
-            "acquired_by": cls.ACQUIRED_BY,
-            "author_of": cls.AUTHOR_OF,
-            "directed_by": cls.DIRECTED_BY,
-            "director": cls.DIRECTED_BY,
-            "born_in": cls.BORN_IN,
-            "birthplace": cls.BORN_IN,
-            "died_in": cls.DIED_IN,
-            "deathplace": cls.DIED_IN,
-            "capital_of": cls.CAPITAL_OF,
-            "part_of": cls.PART_OF,
-            "part": cls.PART_OF,
-            "contains": cls.CONTAINS,
-            "operates_in": cls.OPERATES_IN,
-
-            # Knowledge Graph
-            "no_relation": cls.NO_RELATION,
-            "applies_to_jurisdiction": cls.APPLIES_TO_JURISDICTION,
-            "jurisdiction": cls.APPLIES_TO_JURISDICTION,
-            "author": cls.AUTHOR,
-            "award_received": cls.AWARD_RECEIVED,
-            "award": cls.AWARD_RECEIVED,
-            "basin_country": cls.BASIN_COUNTRY,
-            "capital": cls.CAPITAL,
-            "cast_member": cls.CAST_MEMBER,
-            "cast": cls.CAST_MEMBER,
-            "chairperson": cls.CHAIRPERSON,
-            "chair": cls.CHAIRPERSON,
-            "characters": cls.CHARACTERS,
-            "character": cls.CHARACTERS,
-
-            # Fallbacks
-            "related_to": cls.RELATED_TO,
-            "related": cls.RELATED_TO,
-            "other": cls.OTHER,
-        }
-        return mapping.get(cleaned)
-
-    @classmethod
-    def is_valid(cls, value: str) -> bool:
-        try:
-            cls(value)
-            return True
-        except ValueError:
-            return False
-
-
+        
 class RelationLabels(str, Enum):
     # ── Symmetric Relations ──
     SPOUSE = "spouse"
@@ -669,7 +443,6 @@ class MatchResult:
     iou: float
 
 
-
 @dataclass
 class CandidateResult:
     """
@@ -725,3 +498,8 @@ class OutboxEvent:
     created_at: Optional[str] = None
     processed_at: Optional[str] = None
 
+
+@dataclass
+class NEResult:
+    chunks: List['Chunk'] = field(default_factory=list)
+    entities: List['Entity'] = field(default_factory=list)

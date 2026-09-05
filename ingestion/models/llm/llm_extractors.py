@@ -105,7 +105,7 @@ class NERExtractor(dspy.Module):
                     chunk_id=chunk_id,
                     text=ent.text,
                     canonical_name=ent.text,
-                    status=DisambiguationStatus.AMBIGUOUS,
+                    status=DisambiguationStatus.UNRESOLVED,
                     label=ent_label,
                     start=start,
                     end=end,
@@ -903,7 +903,7 @@ class DSPyCorefResolver(IExtractor):
                     canonical_name=antecedent.text,
                     entity_label=types[0],
                     mention_sentence=mention_sent,
-                    status=DisambiguationStatus.AMBIGUOUS,
+                    status=DisambiguationStatus.UNRESOLVED,
                     confidence=0.7,
                     coref_to=antecedent.text,
                 ))

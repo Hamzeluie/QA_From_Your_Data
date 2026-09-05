@@ -135,9 +135,9 @@ if __name__ == "__main__":
     """
     # ── Run COREF ──
     """
-    entities = [Entity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, canonical_name='Apple Inc.', status=DisambiguationStatus.AMBIGUOUS, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
-                Entity(text='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=1.0, canonical_name='Steve Jobs', status=DisambiguationStatus.AMBIGUOUS, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
-                Entity(text='Cupertino', label=EntityLabels.LOC, start=104, end=113, mention_sentence='The firm is headquartered in <Cupertino>.', confidence=1.0, canonical_name='Cupertino', status=DisambiguationStatus.AMBIGUOUS, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None)
+    entities = [Entity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, canonical_name='Apple Inc.', status=DisambiguationStatus.UNRESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
+                Entity(text='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=1.0, canonical_name='Steve Jobs', status=DisambiguationStatus.UNRESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
+                Entity(text='Cupertino', label=EntityLabels.LOC, start=104, end=113, mention_sentence='The firm is headquartered in <Cupertino>.', confidence=1.0, canonical_name='Cupertino', status=DisambiguationStatus.UNRESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None)
                 ]
     
     coref = get_coref_resolver(BACKEND, nlp=settings.SPACY_MODEL_PATH)

@@ -212,9 +212,7 @@ class Neo4jEntityStore(AbstractEntityStore):
         with self._driver.session(database=self.database) as session:
             return [r["related"] for r in session.run(cypher, canonical=canonical)]
 
-    def find_candidates_cypher(
-        self, entity_text: str, entity_label: Optional[str] = None
-    ) -> List[CandidateResult]:
+    def find_candidates_cypher(self, entity_text: str) -> List[CandidateResult]:
         """
         Three-phase graph search:
         1. Exact alias
@@ -454,5 +452,4 @@ class Neo4jEntityStore(AbstractEntityStore):
             related_to=rec["related"] or [],
             match_score=round(float(rec["score"]), 3),
             match_method=rec["method"],
-            source="neo4j",
         )

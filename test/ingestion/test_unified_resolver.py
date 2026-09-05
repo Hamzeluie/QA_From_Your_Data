@@ -59,7 +59,7 @@ class TestUnifiedResolverUnit:
             )
         ]
         result = resolver._disambiguate(f"A_{tid}", "PER", "ctx", cands)
-        assert result.status == DisambiguationStatus.AMBIGUOUS
+        assert result.status == DisambiguationStatus.UNRESOLVED
 
 
 class TestUnifiedResolverIntegration:

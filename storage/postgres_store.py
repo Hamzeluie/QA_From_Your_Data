@@ -1,3 +1,4 @@
+# postgres_store.py
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 
 from storage.base import AbstractStateStore
-
+from shared.data_classes import Entity
 logger = logging.getLogger(__name__)
 
 
@@ -56,8 +57,8 @@ class PostgresStateStore(AbstractStateStore):
             CREATE TABLE IF NOT EXISTS unresolved_queue (
                 resolution_id TEXT PRIMARY KEY,
                 doc_id TEXT NOT NULL,
-                original_text TEXT NOT NULL,
-                entity_label TEXT NOT NULL,
+                text TEXT NOT NULL,
+                label TEXT NOT NULL,
                 mention_sentence TEXT NOT NULL,
                 start_pos INTEGER NOT NULL,
                 end_pos INTEGER NOT NULL,
@@ -77,13 +78,12 @@ class PostgresStateStore(AbstractStateStore):
                 doc_id TEXT NOT NULL,
                 chunk_id TEXT,
                 canonical_name TEXT NOT NULL,
-                original_text TEXT NOT NULL,
-                entity_label TEXT NOT NULL,
+                text TEXT NOT NULL,
+                label TEXT NOT NULL,
                 mention_sentence TEXT NOT NULL,
                 start_pos INTEGER NOT NULL,
                 end_pos INTEGER NOT NULL,
                 confidence REAL NOT NULL,
-                source TEXT NOT NULL,
                 extracted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
             """,
@@ -214,7 +214,7 @@ class PostgresStateStore(AbstractStateStore):
             cur.execute(
                 """
                 INSERT INTO unresolved_queue
-                (resolution_id, doc_id, original_text, entity_label, mention_sentence,
+                (resolution_id, doc_id, text, label, mention_sentence,
                  start_pos, end_pos, confidence, candidates_json, status, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (resolution_id) DO NOTHING
@@ -222,8 +222,8 @@ class PostgresStateStore(AbstractStateStore):
                 (
                     resolution_id,
                     doc_id,
-                    d.get("original_text", ""),
-                    d.get("entity_label", "UNKNOWN"),
+                    d.get("text", ""),
+                    d.get("label", "UNKNOWN"),
                     d.get("mention_sentence", ""),
                     int(d.get("start", 0)),
                     int(d.get("end", 0)),
@@ -255,16 +255,7 @@ class PostgresStateStore(AbstractStateStore):
 
     def log_mention(
         self,
-        doc_id: str,
-        chunk_id: Optional[str],
-        canonical_name: str,
-        original_text: str,
-        entity_label: str,
-        mention_sentence: str,
-        start: int,
-        end: int,
-        confidence: float,
-        source: str,
+        entity:Entity,
     ) -> None:
         now = datetime.now(timezone.utc)
         conn = self._get_conn()
@@ -272,21 +263,20 @@ class PostgresStateStore(AbstractStateStore):
             cur.execute(
                 """
                 INSERT INTO mention_log
-                (doc_id, chunk_id, canonical_name, original_text, entity_label,
-                 mention_sentence, start_pos, end_pos, confidence, source, extracted_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (doc_id, chunk_id, canonical_name, text, label,
+                 mention_sentence, start_pos, end_pos, confidence, extracted_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    doc_id,
-                    chunk_id,
-                    canonical_name,
-                    original_text,
-                    entity_label,
-                    mention_sentence,
-                    start,
-                    end,
-                    confidence,
-                    source,
+                    entity.doc_id,
+                    entity.chunk_id,
+                    entity.canonical_name,
+                    entity.text,
+                    entity.label,
+                    entity.mention_sentence,
+                    entity.start,
+                    entity.end,
+                    entity.confidence,
                     now,
                 ),
             )
@@ -345,3 +335,6 @@ class PostgresStateStore(AbstractStateStore):
         if self._conn:
             self._conn.close()
             self._conn = None
+            
+            
+            

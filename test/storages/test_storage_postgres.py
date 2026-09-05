@@ -1,3 +1,4 @@
+# test_story_postgres.py
 import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
@@ -29,8 +30,8 @@ class TestPostgresStateStore:
             resolution_id=f"res_{tid}",
             doc_id=tid,
             entity_row={
-                "original_text": "Foo",
-                "entity_label": "PER",
+                "text": "Foo",
+                "label": "PER",
                 "mention_sentence": "Foo is here.",
                 "start": 0,
                 "end": 3,
@@ -42,10 +43,19 @@ class TestPostgresStateStore:
         # ClickHouse async ALTER; we can't easily read back without flush, so just assert no exception
 
     def test_log_mention(self, postgres_store, tid):
+        from shared.data_classes import Entity
+        
         postgres_store.log_mention(
-            doc_id=tid, chunk_id="c1", canonical_name=f"E_{tid}",
-            original_text="e", entity_label="PER", mention_sentence="s",
-            start=0, end=1, confidence=1.0, source="test",
+            Entity(doc_id=tid, 
+                   chunk_id="c1", 
+                   canonical_name=f"E_{tid}",
+                   text="test", 
+                   label="PER", 
+                   mention_sentence="test",
+                   start=0, 
+                   end=1, 
+                   confidence=1.0,
+                   status="RESOLVED")
         )
 
     def test_insert_relations(self, postgres_store, tid):
@@ -53,8 +63,8 @@ class TestPostgresStateStore:
         rels = [
             Relation(
                 doc_id=tid, subject=f"S_{tid}", subject_label="PER",
-                predicate="knows", object=f"O_{tid}", object_label="PER",
-                mention_sentence="x", confidence=0.9, source="test",
+                predicate="test", object=f"O_{tid}", object_label="PER",
+                mention_sentence="test", confidence=0.9,
                 relation_id=f"r_{tid}",
             )
         ]

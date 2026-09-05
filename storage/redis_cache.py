@@ -67,3 +67,6 @@ class RedisCache(AbstractCache):
     def get_job_status(self, doc_id: str) -> Optional[Dict]:
         raw = self.client.get(f"job:{doc_id}")
         return json.loads(raw) if raw else None
+    
+    
+    

@@ -12,8 +12,8 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 
 from storage.factory import StorageFactory
-from shared.data_classes import CandidateResult
-from shared.utils import jaccard_similarity, levenshtein_ratio
+from shared.data_classes import CandidateResult, Entity
+from shared.utils import jaro_winkler, levenshtein_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +30,13 @@ class CandidateFinder:
         self.embedder = embedder
         self.threshold = threshold
 
-    def find_candidates(
-        self,
-        entity_text: str,
-        entity_label: str,
-        entity_sentence: str,
-        threshold: Optional[float] = None,
-    ) -> List[CandidateResult]:
+    def find_candidates(self, entity:Entity, threshold: Optional[float] = None) -> List[CandidateResult]:
         """
         Four-phase retrieval with neural re-rank.
         Returns sorted CandidateResult list.
         """
         thresh = threshold if threshold is not None else self.threshold
-        cache_key = self._cache_key(entity_text, entity_label, entity_sentence)
+        cache_key = self._cache_key(entity.text, entity.label, entity.mention_sentence)
 
         # ── Phase 0: Redis cache ──────────────────────────────────────────────
         cached = self.factory.redis.client.get(cache_key)
@@ -50,11 +44,11 @@ class CandidateFinder:
             return [CandidateResult(**c) for c in json.loads(cached)]
 
         # ── Phase 1: Neo4j graph candidates (exact + partial + word overlap) ─
-        candidates = self.factory.neo4j.find_candidates_cypher(entity_text, entity_label)
+        candidates = self.factory.neo4j.find_candidates_cypher(entity.text)
         seen = {c.canonical for c in candidates}
 
         # ── Phase 2: Elasticsearch fuzzy recall boost ─────────────────────────
-        es_hits = self.factory.es.search_aliases(entity_text, top_k=10)
+        es_hits = self.factory.es.search_aliases(entity.text, top_k=10)
         for hit in es_hits:
             if hit["canonical"] not in seen:
                 seen.add(hit["canonical"])
@@ -67,14 +61,13 @@ class CandidateFinder:
                     related_to=hit.get("related_to", []),
                     match_score=0.3,  # base ES score, will be re-ranked
                     match_method="es_fuzzy",
-                    source="elasticsearch",
                 ))
 
         if not candidates:
             return []
 
         # ── Phase 3: Neural + context ensemble scoring ───────────────────────
-        candidates = self._ensemble_score(candidates, entity_text, entity_label, entity_sentence)
+        candidates = self._ensemble_score(candidates, entity)
 
         # ── Phase 4: Threshold & sort ────────────────────────────────────────
         candidates = [c for c in candidates if c.match_score >= thresh]
@@ -120,9 +113,7 @@ class CandidateFinder:
     def _ensemble_score(
         self,
         candidates: List[CandidateResult],
-        entity_text: str,
-        entity_label: str,
-        entity_sentence: str,
+        entity:Entity
     ) -> List[CandidateResult]:
         if not self.embedder:
             return candidates
@@ -133,7 +124,7 @@ class CandidateFinder:
             return candidates
 
         try:
-            sent_vec = self.embedder.encode([entity_sentence], convert_to_numpy=True)
+            sent_vec = self.embedder.encode([entity.mention_sentence], convert_to_numpy=True)
             sum_vecs = self.embedder.encode(summaries, convert_to_numpy=True)
             sims = sk_cosine_similarity(sent_vec, sum_vecs)[0]
         except Exception:
@@ -146,10 +137,10 @@ class CandidateFinder:
                 neural_sim = float(sims[sim_idx])
                 sim_idx += 1
 
-            jaccard_ctx = jaccard_similarity(entity_sentence, cand.summary) if cand.summary else 0.0
-            lev_name = levenshtein_ratio(entity_text.lower(), cand.summary.lower())
+            jaccard_ctx = jaro_winkler(entity.mention_sentence, cand.summary) if cand.summary else 0.0
+            lev_name = levenshtein_ratio(entity.text.lower(), cand.summary.lower())
 
-            label_bonus = 0.1 if (entity_label and cand.label.upper() == entity_label.upper()) else 0.0
+            label_bonus = 0.1 if (entity.label and cand.label.upper() == entity.label.upper()) else 0.0
 
             # Original weights from your NEDEngine
             final_score = (cand.match_score * 0.1) + \
@@ -169,3 +160,6 @@ class CandidateFinder:
             cand.match_method = f"{cand.match_method}+ensemble"
 
         return candidates
+    
+    
+    

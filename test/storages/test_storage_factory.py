@@ -12,6 +12,8 @@ class TestStorageFactory:
         assert factory.redis is not None
 
     def test_end_to_end_write_and_read(self, factory, tid, mock_embedder):
+        from shared.data_classes import Entity
+
         factory.neo4j.upsert_entity(
             canonical=f"FactoryEnt_{tid}",
             label="PER",
@@ -35,10 +37,16 @@ class TestStorageFactory:
 
         factory.postgres.create_document(tid, "user_1")
         factory.postgres.log_mention(
-            doc_id=tid, chunk_id="c1", canonical_name=f"FactoryEnt_{tid}",
-            original_text=f"FE_{tid}", entity_label="PER",
-            mention_sentence="x", start=0, end=2, confidence=1.0, source="test",
-        )
+            Entity(doc_id=tid, 
+                               chunk_id="c1", 
+                               canonical_name=f"E_{tid}",
+                               text="test", 
+                               label="PER", 
+                               mention_sentence="test",
+                               start=0, 
+                               end=1, 
+                               confidence=1.0,
+                               status="RESOLVED"))
 
         assert factory.neo4j.find_by_canonical(f"FactoryEnt_{tid}") is not None
         assert factory.redis.get_alias(f"fe_{tid}".lower()) == f"FactoryEnt_{tid}"

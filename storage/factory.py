@@ -21,21 +21,25 @@ class StorageFactory:
     @staticmethod
     def from_env() -> "StorageFactory":
         return StorageFactory(
-            neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
-            neo4j_password=os.getenv("NEO4J_PASSWORD", "password"),
+            neo4j_uri=os.getenv("GRAPH_DB_URL", "bolt://localhost:7687"),
+            neo4j_user=os.getenv("GRAPH_DB_USER", "neo4j"),
+            neo4j_password=os.getenv("GRAPH_DB_PASSWORD", "password"),
             neo4j_database=os.getenv("NEO4J_DATABASE", "neo4j"),
+            
             postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
             postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
             postgres_user=os.getenv("POSTGRES_USER", "kg_user"),
             postgres_password=os.getenv("POSTGRES_PASSWORD", "kg_pass"),
             postgres_database=os.getenv("POSTGRES_DB", "knowledge_graph"),
-            qdrant_host=os.getenv("QDRANT_HOST", "localhost"),
+            
+            qdrant_host=os.getenv("VECTOR_DB_URL", "http://localhost"),
             qdrant_port=int(os.getenv("QDRANT_PORT", "6333")),
-            es_hosts=os.getenv("ES_HOSTS", "http://localhost:9200").split(","),
+
+            es_hosts=os.getenv("ELASTIC_SEARCH_HOST", "http://localhost:9200").split(","),
             es_user=os.getenv("ES_USER"),
             es_password=os.getenv("ES_PASSWORD"),
-            redis_host=os.getenv("REDIS_HOST", "localhost"),
+            
+            redis_host=os.getenv("REDIS_HOST", "http://localhost"),
             redis_port=int(os.getenv("REDIS_PORT", "6379")),
             vector_size=int(os.getenv("VECTOR_SIZE", "384")),
         )

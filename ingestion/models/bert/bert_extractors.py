@@ -196,7 +196,7 @@ class BertNERExtractor(IExtractor):
                     chunk_id=chunk_id,
                     text=text[start:end],
                     canonical_name=text[start:end],
-                    status=DisambiguationStatus.AMBIGUOUS,
+                    status=DisambiguationStatus.UNRESOLVED,
                     label=ent_label,
                     start=start,
                     end=end,

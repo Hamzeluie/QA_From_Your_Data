@@ -420,7 +420,6 @@ class WikipediaEntitySummarizer:
                 self.embedder = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
                 self.embedder.save(settings.EMBEDDING_MODEL_PATH)
         
-
     def search_wikipedia(self, entity: str, limit: int = 5) -> List[Dict]:
         params = {
             "action": "query",
@@ -558,92 +557,36 @@ class WikipediaEntitySummarizer:
 
         return fallback_label or "UNKNOWN"
 
-    def summarize(self,
-                  entity: str,
-                  context: str,
-                  ner_label: Optional[str] = None) -> Optional[Entity]:
-        candidates = self.search_wikipedia(entity)
+    def summarize(self,entity: Entity) -> Optional[Entity]:
+        candidates = self.search_wikipedia(entity.text)
         if not candidates:
             return None
 
-        best = self._rank_candidates(entity, context, candidates, ner_label)
+        best = self._rank_candidates(entity.text, entity.mention_sentence, candidates, entity.label)
         if not best:
             return None
 
-        summary = self.extract_summary(best["title"])
+        entity.summary = self.extract_summary(best["title"])
 
         # ── INFER LABEL FROM SUMMARY (override spaCy guess if confident) ──
-        wiki_inferred_label = self.classify_from_summary(summary, fallback_label=ner_label)
+        wiki_inferred_label = self.classify_from_summary(entity.summary, fallback_label=entity.label)
 
         confidence = 0.5
-        if self.embedder and summary:
-            ctx_vec = self.embedder.encode([context], convert_to_numpy=True)
-            sum_vec = self.embedder.encode([summary], convert_to_numpy=True)
+        if self.embedder and entity.summary:
+            ctx_vec = self.embedder.encode([entity.mention_sentence], convert_to_numpy=True)
+            sum_vec = self.embedder.encode([entity.summary], convert_to_numpy=True)
             confidence = float(sk_cosine_similarity(ctx_vec, sum_vec)[0][0])
 
         if confidence >= 0.5:
-            status = DisambiguationStatus.NEW_ENTITY
+            entity.status = DisambiguationStatus.NEW_ENTITY
         else:
-            status = DisambiguationStatus.UNKNOWN
-
-        return Entity(
-            original_text=entity,
-            canonical_name=best["title"],
-            entity_label=wiki_inferred_label,
-            mention_sentence=context,
-            confidence=confidence,
-            status=status,
-            source="wikipedia",
-            summary=summary,
-            context_clues=[
-                f"Wikipedia match: {best['title']}",
-                f"Label inferred from summary: {wiki_inferred_label}"
-            ],
-            needs_review=True,
-        )
-        
-    def _summarize(self,
-                  entity: str,
-                  context: str,
-                  ner_label: Optional[str] = None) -> Optional[Entity]:
-        candidates = self.search_wikipedia(entity)
-        if not candidates:
-            return None
-
-        best = self._rank_candidates(entity, context, candidates, ner_label)
-        if not best:
-            return None
-
-        summary = self.extract_summary(best["title"])
-
-        confidence = 0.5
-        if self.embedder and summary:
-            ctx_vec = self.embedder.encode([context], convert_to_numpy=True)
-            sum_vec = self.embedder.encode([summary], convert_to_numpy=True)
-            confidence = float(sk_cosine_similarity(ctx_vec, sum_vec)[0][0])
-        
-        if confidence >= 0.7:
-            status = DisambiguationStatus.RESOLVED
-            needs_review = False
-        else:
-            status = DisambiguationStatus.UNKNOWN 
-            needs_review = True
-
-            
-        return Entity(
-            original_text=entity,
-            canonical_name=best["title"],
-            entity_label=ner_label or "UNKNOWN",
-            mention_sentence=context,
-            confidence=confidence,
-            status=status,
-            source="wikipedia",
-            wiki_summary=summary,
-            wiki_url=best["url"],
-            context_clues=[f"Wikipedia match: {best['title']}"],
-            needs_review=needs_review,
-        )
-
+            entity.status = DisambiguationStatus.UNRESOLVED
+        entity.canonical_name = best["title"]
+        entity.confidence = confidence
+        entity.context_clues = [f"Wikipedia match: {best['title']}", f"Label inferred from summary: {wiki_inferred_label}"]
+        entity.needs_review = True
+        return entity
+    
 
 class ValueNormalizer:
     RELATIVE_DATES = {

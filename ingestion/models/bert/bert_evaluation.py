@@ -2,8 +2,6 @@ import json
 import torch
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
-from collections import defaultdict
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from torch.utils.data import DataLoader
 from sklearn.metrics import precision_recall_fscore_support, classification_report
