@@ -18,9 +18,9 @@ def __getattr__(name):
     if name == "Neo4jEntityStore":
         from storage.neo4j_store import Neo4jEntityStore
         return Neo4jEntityStore
-    if name == "ClickHouseStateStore":
-        from storage.clickhouse_store import ClickHouseStateStore
-        return ClickHouseStateStore
+    if name == "PostgresStateStore":
+        from storage.postgres_store import PostgresStateStore
+        return PostgresStateStore
     if name == "QdrantVectorStore":
         from storage.qdrant_store import QdrantVectorStore
         return QdrantVectorStore

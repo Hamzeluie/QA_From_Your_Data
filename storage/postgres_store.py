@@ -6,6 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import logging
+import json
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 
@@ -13,7 +14,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 
 from storage.base import AbstractStateStore
-from shared.data_classes import Entity
+from storage.data_classes import MentionEntity, Relation, DisambiguationStatus
 logger = logging.getLogger(__name__)
 
 
@@ -54,26 +55,7 @@ class PostgresStateStore(AbstractStateStore):
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS unresolved_queue (
-                resolution_id TEXT PRIMARY KEY,
-                doc_id TEXT NOT NULL,
-                text TEXT NOT NULL,
-                label TEXT NOT NULL,
-                mention_sentence TEXT NOT NULL,
-                start_pos INTEGER NOT NULL,
-                end_pos INTEGER NOT NULL,
-                confidence REAL NOT NULL,
-                candidates_json TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                assigned_to TEXT,
-                resolved_canonical TEXT,
-                resolved_by TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                resolved_at TIMESTAMP WITH TIME ZONE
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS mention_log (
+            CREATE TABLE IF NOT EXISTS resolved_entities (
                 id SERIAL PRIMARY KEY,
                 doc_id TEXT NOT NULL,
                 chunk_id TEXT,
@@ -84,11 +66,29 @@ class PostgresStateStore(AbstractStateStore):
                 start_pos INTEGER NOT NULL,
                 end_pos INTEGER NOT NULL,
                 confidence REAL NOT NULL,
+                resolved_by TEXT,
+                resolved_at TIMESTAMP WITH TIME ZONE,
                 extracted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS relations (
+            CREATE TABLE IF NOT EXISTS unresolved_entities (
+                resolution_id TEXT PRIMARY KEY,
+                doc_id TEXT NOT NULL,
+                chunk_id TEXT,
+                text TEXT NOT NULL,
+                label TEXT NOT NULL,
+                mention_sentence TEXT NOT NULL,
+                start_pos INTEGER NOT NULL,
+                end_pos INTEGER NOT NULL,
+                confidence REAL NOT NULL,
+                candidates_json TEXT,
+                assigned_to TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS resolved_relations (
                 id SERIAL PRIMARY KEY,
                 doc_id TEXT NOT NULL,
                 relation_id TEXT NOT NULL UNIQUE,
@@ -99,17 +99,36 @@ class PostgresStateStore(AbstractStateStore):
                 object_label TEXT NOT NULL,
                 mention_sentence TEXT,
                 confidence REAL NOT NULL,
-                source TEXT NOT NULL,
-                provisional BOOLEAN NOT NULL DEFAULT FALSE,
-                chunk_id TEXT,
+                chunk_id TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                resolved_by TEXT,
+                resolved_at TIMESTAMP WITH TIME ZONE,
                 extracted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS unresolved_relations (
+                relation_id TEXT PRIMARY KEY,
+                doc_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                subject_label TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT NOT NULL,
+                object_label TEXT NOT NULL,
+                mention_sentence TEXT,
+                confidence REAL NOT NULL,
+                chunk_id TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_doc_state_status ON document_state(status)",
-            "CREATE INDEX IF NOT EXISTS idx_unresolved_doc ON unresolved_queue(doc_id, created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_mention_canonical ON mention_log(canonical_name, extracted_at)",
-            "CREATE INDEX IF NOT EXISTS idx_relations_doc ON relations(doc_id, predicate, extracted_at)",
+            "CREATE INDEX IF NOT EXISTS idx_resolved_entities_canonical ON resolved_entities(canonical_name, extracted_at)",
+            "CREATE INDEX IF NOT EXISTS idx_unresolved_entities_doc ON unresolved_entities(doc_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_resolved_relations_doc ON resolved_relations(doc_id, predicate, extracted_at)",
+            "CREATE INDEX IF NOT EXISTS idx_unresolved_relations_doc ON unresolved_relations(doc_id, created_at)",
         ]
+
 
         conn = self._get_conn()
         with conn.cursor() as cur:
@@ -191,124 +210,235 @@ class PostgresStateStore(AbstractStateStore):
             row = cur.fetchone()
             return dict(row) if row else None
 
-    # ── Unresolved Queue ────────────────────────────────────────────────────
+    # ── Unresolved Entities ─────────────────────────────────────────────────
 
-    def enqueue_unresolved(
+    def insert_unresolved(
         self,
         resolution_id: str,
-        doc_id: str,
-        entity_row: Any,
-        candidates_json: str,
+        mentionentity:MentionEntity,
     ) -> None:
         now = datetime.now(timezone.utc)
-
-        if hasattr(entity_row, "to_dict"):
-            d = entity_row.to_dict()
-        elif hasattr(entity_row, "__dataclass_fields__"):
-            d = entity_row.__dict__
-        else:
-            d = dict(entity_row)
-
         conn = self._get_conn()
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO unresolved_queue
-                (resolution_id, doc_id, text, label, mention_sentence,
-                 start_pos, end_pos, confidence, candidates_json, status, created_at)
+                INSERT INTO unresolved_entities
+                (resolution_id, doc_id, chunk_id, text, label, mention_sentence,
+                 start_pos, end_pos, confidence, candidates_json, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (resolution_id) DO NOTHING
                 """,
                 (
                     resolution_id,
-                    doc_id,
-                    d.get("text", ""),
-                    d.get("label", "UNKNOWN"),
-                    d.get("mention_sentence", ""),
-                    int(d.get("start", 0)),
-                    int(d.get("end", 0)),
-                    float(d.get("confidence", 0.0)),
-                    candidates_json,
-                    "pending",
+                    mentionentity.doc_id,
+                    mentionentity.chunk_id,
+                    mentionentity.text,
+                    mentionentity.label,
+                    mentionentity.mention_sentence,
+                    mentionentity.start,
+                    mentionentity.end,
+                    mentionentity.confidence,
+                    mentionentity.kg_candidates,
                     now,
                 ),
             )
             conn.commit()
-
-    def resolve_unresolved(
-        self, resolution_id: str, canonical: str, user_id: str
-    ) -> None:
+    
+    def resolve_unresolved(self, resolution_id: str, canonical: str, user_id: str) -> None:
+        """Moves an MentionEntity from unresolved_entities to resolved_entities."""
         conn = self._get_conn()
         with conn.cursor() as cur:
+            # Fetch the unresolved MentionEntity
             cur.execute(
                 """
-                UPDATE unresolved_queue
-                SET status = 'resolved', resolved_canonical = %s,
-                    resolved_by = %s, resolved_at = NOW()
+                SELECT doc_id, chunk_id, text, label, mention_sentence, start_pos, end_pos, confidence
+                FROM unresolved_entities
                 WHERE resolution_id = %s
                 """,
-                (canonical, user_id, resolution_id),
+                (resolution_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                logger.warning(f"Unresolved MentionEntity with resolution_id {resolution_id} not found.")
+                return
+            
+            # Insert into resolved_entities
+            cur.execute(
+                """
+                INSERT INTO resolved_entities
+                (doc_id, chunk_id, canonical_name, text, label, mention_sentence, 
+                 start_pos, end_pos, confidence, resolved_by, resolved_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """,
+                (
+                    row["doc_id"],
+                    row["chunk_id"],
+                    canonical,
+                    row["text"],
+                    row["label"],
+                    row["mention_sentence"],
+                    row["start_pos"],
+                    row["end_pos"],
+                    row["confidence"],
+                    user_id,
+                )
+            )
+            
+            # Delete from unresolved_entities
+            cur.execute(
+                "DELETE FROM unresolved_entities WHERE resolution_id = %s",
+                (resolution_id,)
             )
             conn.commit()
 
-    # ── Mention Log ─────────────────────────────────────────────────────────
+    def get_unresolved_entities(self) -> List[MentionEntity]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT resolution_id, doc_id, chunk_id, text, label, mention_sentence,
+                       start_pos, end_pos, confidence, candidates_json
+                FROM unresolved_entities
+                ORDER BY created_at DESC
+                """
+            )
+            rows = cur.fetchall()
+            entities = []
+            for row in rows:
+                candidates = []
+                if row["candidates_json"]:
+                    try:
+                        candidates = json.loads(row["candidates_json"])
+                    except json.JSONDecodeError:
+                        pass  # Fallback to empty list if JSON is malformed
+                
+                mentionentity = MentionEntity(
+                    text=row["text"],
+                    label=row["label"],
+                    start=int(row["start_pos"]),
+                    end=int(row["end_pos"]),
+                    mention_sentence=row["mention_sentence"],
+                    confidence=float(row["confidence"]),
+                    canonical_name="",  # Unresolved
+                    status=DisambiguationStatus.UNRESOLVED,
+                    doc_id=row["doc_id"],
+                    chunk_id=row.get("chunk_id"),
+                    kg_candidates=candidates,
+                )
+                entities.append()
+            return entities
 
-    def log_mention(
-        self,
-        entity:Entity,
-    ) -> None:
+    # ── Resolved Entities (formerly Mentions) ───────────────────────────────
+    
+    def insert_resolved_MentionEntity(self, MentionEntity: MentionEntity) -> None:
         now = datetime.now(timezone.utc)
         conn = self._get_conn()
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO mention_log
+                INSERT INTO resolved_entities
                 (doc_id, chunk_id, canonical_name, text, label,
                  mention_sentence, start_pos, end_pos, confidence, extracted_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    entity.doc_id,
-                    entity.chunk_id,
-                    entity.canonical_name,
-                    entity.text,
-                    entity.label,
-                    entity.mention_sentence,
-                    entity.start,
-                    entity.end,
-                    entity.confidence,
+                    MentionEntity.doc_id,
+                    MentionEntity.chunk_id,
+                    MentionEntity.canonical_name,
+                    MentionEntity.text,
+                    MentionEntity.label,
+                    MentionEntity.mention_sentence,
+                    MentionEntity.start,
+                    MentionEntity.end,
+                    MentionEntity.confidence,
                     now,
                 ),
             )
-            conn.commit()
+            conn.commit() 
+
+    def get_resolved_entities_by_canonical(self, canonical_name: str) -> List[MentionEntity]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, chunk_id, canonical_name, text, label,
+                       mention_sentence, start_pos, end_pos, confidence
+                FROM resolved_entities
+                WHERE canonical_name = %s
+                ORDER BY extracted_at DESC
+                """,
+                (canonical_name,),
+            )
+            return [self._row_to_MentionEntity(row) for row in cur.fetchall()]
+
+    def get_resolved_entities_by_text(self, text: str) -> List[MentionEntity]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, chunk_id, canonical_name, text, label,
+                       mention_sentence, start_pos, end_pos, confidence
+                FROM resolved_entities
+                WHERE text ILIKE %s
+                ORDER BY extracted_at DESC
+                """,
+                (f"%{text}%",),
+            )
+            return [self._row_to_MentionEntity(row) for row in cur.fetchall()]
+
+    def get_resolved_entities_by_doc(self, doc_id: str) -> List[MentionEntity]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, chunk_id, canonical_name, text, label,
+                       mention_sentence, start_pos, end_pos, confidence
+                FROM resolved_entities
+                WHERE doc_id = %s
+                ORDER BY extracted_at DESC
+                """,
+                (doc_id,),
+            )
+            return [self._row_to_MentionEntity(row) for row in cur.fetchall()]
+
+    def _row_to_MentionEntity(self, row: Dict[str, Any]) -> MentionEntity:
+        """Helper to map a database row to an MentionEntity dataclass."""
+        return MentionEntity(
+            text=row["text"],
+            label=row["label"],
+            start=int(row["start_pos"]),
+            end=int(row["end_pos"]),
+            mention_sentence=row["mention_sentence"],
+            confidence=float(row["confidence"]),
+            canonical_name=row["canonical_name"],
+            status=DisambiguationStatus.RESOLVED,
+            doc_id=row.get("doc_id"),
+            chunk_id=row.get("chunk_id"),
+        )
 
     # ── Relations ───────────────────────────────────────────────────────────
 
-    def insert_relations(self, relations: List[Any]) -> None:
+    def insert_resolved_relations(self, relations: List[Relation]) -> None:
         if not relations:
             return
 
         now = datetime.now(timezone.utc)
         rows = []
         for r in relations:
-            if hasattr(r, "to_dict"):
-                d = r.to_dict()
-            else:
-                d = dict(r)
+            evidence_str = json.dumps(r.evidence) if isinstance(r.evidence, list) else (str(r.evidence) if r.evidence else "[]")
             rows.append(
                 (
-                    d.get("doc_id", ""),
-                    d.get("relation_id", ""),
-                    d.get("subject", ""),
-                    d.get("subject_label", "UNKNOWN"),
-                    d.get("predicate", ""),
-                    d.get("object", ""),
-                    d.get("object_label", "UNKNOWN"),
-                    d.get("mention_sentence", ""),
-                    float(d.get("confidence", 0.0)),
-                    d.get("source", "dspy"),
-                    bool(d.get("provisional", False)),
-                    d.get("chunk_id"),
+                    r.doc_id,
+                    r.relation_id,
+                    r.subject,
+                    r.subject_label,
+                    r.predicate,
+                    r.object,
+                    r.object_label,
+                    r.mention_sentence,
+                    r.confidence,
+                    r.chunk_id,
+                    evidence_str,
                     now,
                 )
             )
@@ -318,9 +448,50 @@ class PostgresStateStore(AbstractStateStore):
             execute_values(
                 cur,
                 """
-                INSERT INTO relations
+                INSERT INTO resolved_relations
                 (doc_id, relation_id, subject, subject_label, predicate, object,
-                 object_label, mention_sentence, confidence, source, provisional, chunk_id, extracted_at)
+                 object_label, mention_sentence, confidence, chunk_id, evidence, extracted_at)
+                VALUES %s
+                ON CONFLICT (relation_id) DO NOTHING
+                """,
+                rows,
+                page_size=1000,
+            )
+            conn.commit()
+    
+    def insert_unresolved_relations(self, relations: List[Relation]) -> None:
+        if not relations:
+            return
+
+        now = datetime.now(timezone.utc)
+        rows = []
+        for r in relations:
+            evidence_str = json.dumps(r.evidence) if isinstance(r.evidence, list) else (str(r.evidence) if r.evidence else "[]")
+            rows.append(
+                (
+                    r.relation_id,
+                    r.doc_id,
+                    r.subject,
+                    r.subject_label,
+                    r.predicate,
+                    r.object,
+                    r.object_label,
+                    r.mention_sentence,
+                    r.confidence,
+                    r.chunk_id,
+                    evidence_str,
+                    now,
+                )
+            )
+
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                INSERT INTO unresolved_relations
+                (relation_id, doc_id, subject, subject_label, predicate, object,
+                 object_label, mention_sentence, confidence, chunk_id, evidence, created_at)
                 VALUES %s
                 ON CONFLICT (relation_id) DO NOTHING
                 """,
@@ -329,6 +500,141 @@ class PostgresStateStore(AbstractStateStore):
             )
             conn.commit()
 
+    def resolve_unresolved_relation(self, relation_id: str, user_id: str) -> None:
+        """Moves a relation from unresolved_relations to resolved_relations."""
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT doc_id, subject, subject_label, predicate, object, object_label,
+                       mention_sentence, confidence, chunk_id, evidence
+                FROM unresolved_relations
+                WHERE relation_id = %s
+                """,
+                (relation_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                logger.warning(f"Unresolved relation with relation_id {relation_id} not found.")
+                return
+            
+            cur.execute(
+                """
+                INSERT INTO resolved_relations
+                (doc_id, relation_id, subject, subject_label, predicate, object, object_label,
+                 mention_sentence, confidence, chunk_id, evidence, resolved_by, resolved_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """,
+                (
+                    row["doc_id"], relation_id, row["subject"], row["subject_label"],
+                    row["predicate"], row["object"], row["object_label"],
+                    row["mention_sentence"], row["confidence"], row["chunk_id"],
+                    row["evidence"], user_id
+                )
+            )
+            
+            cur.execute(
+                "DELETE FROM unresolved_relations WHERE relation_id = %s",
+                (relation_id,)
+            )
+            conn.commit()
+
+    def get_resolved_relations_by_MentionEntity(self, canonical_name: str, limit: int = 200) -> List[Relation]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, relation_id, subject, subject_label, predicate, object,
+                       object_label, mention_sentence, confidence, chunk_id, evidence
+                FROM resolved_relations
+                WHERE subject = %s OR object = %s
+                ORDER BY extracted_at DESC
+                LIMIT %s
+                """,
+                (canonical_name, canonical_name, limit),
+            )
+            return [self._row_to_relation(row) for row in cur.fetchall()]
+
+    def get_resolved_relations_by_predicate(self, doc_id: str, predicate: str, limit: int = 200) -> List[Relation]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, relation_id, subject, subject_label, predicate, object,
+                       object_label, mention_sentence, confidence, chunk_id, evidence
+                FROM resolved_relations
+                WHERE doc_id = %s AND predicate = %s
+                ORDER BY extracted_at DESC
+                LIMIT %s
+                """,
+                (doc_id, predicate, limit),
+            )
+            return [self._row_to_relation(row) for row in cur.fetchall()]
+
+    def get_relations_by_predicate(self, doc_id: str, predicate: str, limit: int = 200) -> List[Relation]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, relation_id, subject, subject_label, predicate, object,
+                       object_label, mention_sentence, confidence, provisional, chunk_id, evidence
+                FROM relations
+                WHERE doc_id = %s AND predicate = %s
+                ORDER BY extracted_at DESC
+                LIMIT %s
+                """,
+                (doc_id, predicate, limit),
+            )
+            return [self._row_to_relation(row) for row in cur.fetchall()]
+
+    def get_unresolved_relations(self, limit: int = 200) -> List[Relation]:
+        conn = self._get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT doc_id, relation_id, subject, subject_label, predicate, object,
+                       object_label, mention_sentence, confidence, chunk_id, evidence
+                FROM unresolved_relations
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,)
+            )
+            relations = []
+            for row in cur.fetchall():
+                rel = self._row_to_relation(row)
+                rel.provisional = True  # Mark as provisional since it's from the unresolved table
+                relations.append(rel)
+            return relations
+
+    def _row_to_relation(self, row: Dict[str, Any]) -> Relation:
+        """Helper to map a database row to a Relation dataclass."""
+        evidence = row.get("evidence")
+        
+        # Safely parse evidence from TEXT/JSON column back to List[str]
+        if isinstance(evidence, str):
+            try:
+                evidence = json.loads(evidence)
+            except json.JSONDecodeError:
+                evidence = [evidence] if evidence else []
+        elif evidence is None:
+            evidence = []
+            
+        return Relation(
+            doc_id=row["doc_id"],
+            relation_id=row.get("relation_id"),
+            subject=row["subject"],
+            subject_label=row["subject_label"],
+            predicate=row["predicate"],
+            object=row["object"],
+            object_label=row["object_label"],
+            mention_sentence=row.get("mention_sentence", ""),
+            confidence=float(row.get("confidence", 0.0)),
+            provisional=bool(row.get("provisional", False)),
+            chunk_id=row.get("chunk_id"),
+            evidence=evidence if isinstance(evidence, list) else [],
+        )
+    
     # ── Lifecycle ───────────────────────────────────────────────────────────
 
     def close(self) -> None:

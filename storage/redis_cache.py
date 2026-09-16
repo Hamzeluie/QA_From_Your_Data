@@ -21,7 +21,6 @@ class RedisCache(AbstractCache):
     def set_alias(self, normalized_alias: str, canonical: str, ttl: int = 300) -> None:
         self.client.set(f"alias:{normalized_alias}", canonical, ex=ttl)
 
-
     def invalidate_alias(self, normalized_alias: str) -> None:
         self.client.delete(f"alias:{normalized_alias}")
 

@@ -4,156 +4,24 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 
 
-@dataclass
-class Chunk:
-    doc_id: str
-    chunk_id: str
-    owner_id: str
-    sentence: str
-    date_time: str
-    start_offset:int
-    end_offset:int
 
-
-class DisambiguationStatus(Enum):
-    RESOLVED = "resolved"
-    UNRESOLVED = "unresolved"
-    NEW_ENTITY = "new_entity"
-    # AMBIGUOUS = "ambiguous"
-    # UNKNOWN = "unknown"
-
-
-@dataclass
-class Entity:
-    text: str
-    label: str
-    start: int
-    end: int
-    mention_sentence: str
-    confidence: float
-    canonical_name: str
-    status: DisambiguationStatus
-    doc_id: Optional[str] = None
-    chunk_id: Optional[str] = None
-    kg_candidates: List[Dict] = field(default_factory=list)
-    summary: Optional[str] = None
-    context_clues: List[str] = field(default_factory=list)
-    needs_review: bool = False
-    is_nil: bool = False
-    coref_to: Optional[str] = None
+# ========== Label DataClasses
+class CandidateSource(str, Enum):
+    REDIS = "redis"
+    POSTGRES = "postgres"
+    ELASTICSEARCH = "elasticsearch"
+    QDRANT = "qdrant"
+    NEO4J = "neo4j"
     
-    @classmethod
-    def from_gt(cls, gt: Dict) -> "Entity":
-        if isinstance(gt, Entity):
-            return gt
-        return cls(
-            text=gt["text"],
-            label=gt["label"].upper().strip(),
-            start=int(gt["start"]),
-            end=int(gt["end"]),
-            mention_sentence=gt.get("mention_sentence", ""),
-            confidence=1.0,
-            canonical_name=gt.get("canonical_name", ""),
-            status=DisambiguationStatus(gt.get("status", "unknown")),
-            doc_id=gt.get("doc_id"),
-            chunk_id=gt.get("chunk_id"),
-            kg_candidates=gt.get("kg_candidates", []),
-            summary=gt.get("summary"),
-            context_clues=gt.get("context_clues", []),
-            needs_review=gt.get("needs_review", False),
-            is_nil=gt.get("is_nil", False),
-            coref_to=gt.get("coref_to"),
-        )
-
-    @classmethod
-    def from_pred(cls, pred: Dict) -> "Entity":
-        if isinstance(pred, Entity):
-            return pred
-        return cls(
-            text=pred["text"],
-            label=pred["label"].upper().strip(),
-            start=int(pred["start_char"]),
-            end=int(pred["end_char"]),
-            mention_sentence=pred.get("mention_sentence", ""),
-            confidence=float(pred.get("confidence", 1.0)),
-            canonical_name=pred.get("canonical_name", ""),
-            status=DisambiguationStatus(pred.get("status", "unknown")),
-            doc_id=pred.get("doc_id"),
-            chunk_id=pred.get("chunk_id"),
-            kg_candidates=pred.get("kg_candidates", []),
-            summary=pred.get("summary"),
-            context_clues=pred.get("context_clues", []),
-            needs_review=pred.get("needs_review", False),
-            is_nil=pred.get("is_nil", False),
-            coref_to=pred.get("coref_to"),
-        )
-
-    def span_overlap(self, other: "Entity") -> float:
-        """Return IoU (Intersection over Union) of spans."""
-        inter_start = max(self.start, other.start)
-        inter_end = min(self.end, other.end)
-        if inter_start >= inter_end:
-            return 0.0
-        intersection = inter_end - inter_start
-        union = max(self.end, other.end) - min(self.start, other.start)
-        return intersection / union if union > 0 else 0.0
-
-    def exact_match(self, other: "Entity") -> bool:
-        return self.start == other.start and self.end == other.end
-
-    def partial_match(self, other: "Entity", min_overlap: float = 0.5) -> bool:
-        return self.span_overlap(other) >= min_overlap
-
-    def any_overlap(self, other: "Entity") -> bool:
-        return not (self.end <= other.start or self.start >= other.end)
-
-    def same_sentence(self, other: "Entity") -> bool:
-        """Whether two entities were mentioned in the same sentence."""
-        if not self.mention_sentence or not other.mention_sentence:
-            return False
-        return self.mention_sentence.strip() == other.mention_sentence.strip()
-
-    def to_dict(self) -> Dict:
-        return {
-            "text": self.text,
-            "label": self.label,
-            "start": self.start,
-            "end": self.end,
-            "mention_sentence": self.mention_sentence,
-            "confidence": round(self.confidence, 3),
-            "canonical_name": self.canonical_name,
-            "status": self.status.value,
-            "doc_id": self.doc_id,
-            "chunk_id": self.chunk_id,
-            "kg_candidates": self.kg_candidates,
-            "summary": self.summary,
-            "context_clues": self.context_clues,
-            "needs_review": self.needs_review,
-            "is_nil": self.is_nil,
-            "coref_to": self.coref_to,
-        }
-
-
-@dataclass
-class Relation:
-    doc_id: str
-    subject: str
-    subject_label: str
-    predicate: str
-    object: str
-    object_label: str
-    mention_sentence: str
-    confidence: float = 0.0
-    needs_review: bool = False
-    evidence: List[str] = field(default_factory=list)
-    relation_id: Optional[str] = None
-    chunk_id: Optional[str] = None
-    provisional: bool = False
-
-    def to_dict(self) -> Dict:
-        return asdict(self)
-
-
+    
+class CandidateMatchMethod(str, Enum):
+    EXACT = "exact"
+    ALIAS = "alias"
+    FUZZY = "fuzzy"
+    SEMANTIC = "semantic"
+    GRAPH = "graph"
+    
+    
 class EntityLabels(str, Enum):
     PER = "PERSON"
     ORG = "ORGANIZATION"
@@ -229,7 +97,7 @@ class EntityLabels(str, Enum):
         except ValueError:
             return False
         
-        
+               
 class RelationLabels(str, Enum):
     # ── Symmetric Relations ──
     SPOUSE = "spouse"
@@ -409,6 +277,131 @@ class RelationLabels(str, Enum):
             return False
 
 
+class DisambiguationStatus(Enum):
+    RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
+
+# ========== NER DataClasses
+@dataclass
+class Chunk:
+    doc_id: str
+    chunk_id: str
+    owner_id: str
+    sentence: str
+    start_offset:int
+    end_offset:int
+    updated_at: str
+    metadata: Optional[dict] = None
+    
+    def to_dict(self) -> Dict:
+        return {
+            "doc_id": self.doc_id,
+            "chunk_id": self.chunk_id,
+            "owner_id": self.owner_id,
+            "sentence": self.sentence,
+            "start_offset": self.start_offset,
+            "end_offset": self.end_offset,
+            "metadata": self.metadata,
+            "updated_at": self.updated_at
+            }
+
+
+@dataclass
+class CanonicalEntity:
+    canonical_id: str
+    name: str
+    label: str
+    aliases: List[str] = field(default_factory=list)
+    summary: Optional[str] = None
+    updated_at: Optional[str] = None
+    
+    def to_dict(self) -> Dict:
+        return {
+            "canonical_id": self.canonical_id,
+            "name": self.name,
+            "label": self.label,
+            "aliases": self.aliases,
+            "summary": self.summary,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
+class MentionEntity:
+    # What NER actually detected
+    text: str
+    label: str
+
+    # Character offsets in the source text
+    start: int
+    end: int
+
+    # Local context used for resolution
+    mention_sentence: str
+
+    # NER confidence
+    confidence: float
+
+    # Source location
+    doc_id: str
+    chunk_id: str
+
+    # Coreference information
+    coref_to: Optional[str] = None
+    
+    def to_dict(self) -> Dict:
+        return {
+            "text": self.text,
+            "label": self.label,
+            "start":self.start,
+            "end":self.end,
+            "mention_sentence": self.mention_sentence,
+            "confidence":self.confidence,
+            "doc_id":self.doc_id,
+            "chunk_id":self.chunk_id,
+            "coref_to":self.coref_to,
+        }
+
+
+@dataclass
+class CandidateResult:
+    # Canonical identity
+    canonical_id: str
+    canonical_name: str
+
+    # Canonical metadata
+    label: str
+    aliases: List[str] = field(default_factory=list)
+    summary: Optional[str] = None
+
+    # How this candidate was found
+    source: CandidateSource = CandidateSource.POSTGRES
+    match_method: CandidateMatchMethod = CandidateMatchMethod.FUZZY
+
+    # Candidate-specific scores
+    match_score: float = 0.0
+    label_match: bool = False
+    
+    def to_dict(self) -> Dict:
+        return {
+            "canonical_id": self.canonical_id,
+            "canonical_name": self.canonical_name,
+            "label": self.label,
+            "aliases": self.aliases,
+            "summary": self.summary,
+            "source": self.source,
+            "match_method": self.match_method,
+            "match_score": round(self.match_score, 3),
+            "label_match": self.label_match,
+        }
+
+
+@dataclass
+class NEResult:
+    chunks: List[Chunk] = field(default_factory=list)
+    entities: List[MentionEntity] = field(default_factory=list)
+
+# ========== Coreference DataClasses
 @dataclass
 class Mention:
     text: str
@@ -417,9 +410,24 @@ class Mention:
     sent_id: int
     is_pronoun: bool = False
     pronoun_type: Optional[str] = None  # "person", "org", "ambiguous"
-    resolved_to: Optional[str] = None
-    resolved_entity_idx: Optional[int] = None
+    token: Optional[str] = None
+    # resolved_to: Optional[str] = None
+    # resolved_entity_idx: Optional[int] = None
 
+@dataclass
+class CorefMention:
+    text: str
+    start: int
+    end: int
+    head: str
+    head_lemma: str
+    pos: str
+    label: EntityLabels | None
+    sentence_id: int
+    number: str
+    gender: str | None
+    is_pronoun: bool
+    is_named_entity: bool
 
 @dataclass
 class CorefChain:
@@ -427,59 +435,34 @@ class CorefChain:
     pronoun: Mention
     antecedent_doc_id: str
     antecedent_chunk_id:str
+    pronoun_token:str
     antecedent_text: str
     antecedent_start: int
     antecedent_end: int
     method: str  # "nlp" | "llm" | "rule"
     confidence: float
 
-
+# ========== RelationExtraction DataClasses
 @dataclass
-class MatchResult:
-    """Result of matching one prediction against ground truth."""
-    pred: Entity
-    matched_gt: Optional[Entity]
-    match_label: str
-    iou: float
-
-
-@dataclass
-class CandidateResult:
-    """
-    Structured output of CandidateFinder.find_candidates().
-    Mirrors the Dict returned by legacy NEDEngine._make_candidate(),
-    but is type-safe and cross-cutting.
-    """
-    canonical: str
-    label: str
-    aliases: List[str]
-    summary: str
-    context_indicators: List[str]
-    related_to: List[str]
-    match_score: float
-    match_method: str
-    neural_sim: Optional[float] = None
-    jaccard_ctx: Optional[float] = None
-    levenshtein_name: Optional[float] = None
-    label_match: bool = False
+class Relation:
+    doc_id: str
+    subject: str
+    subject_label: str
+    predicate: str
+    object: str
+    object_label: str
+    mention_sentence: str
+    confidence: float = 0.0
+    needs_review: bool = False
+    evidence: List[str] = field(default_factory=list)
+    relation_id: Optional[str] = None
+    chunk_id: Optional[str] = None
+    provisional: bool = False
 
     def to_dict(self) -> Dict:
-        return {
-            "canonical": self.canonical,
-            "label": self.label,
-            "aliases": self.aliases,
-            "summary": self.summary,
-            "context_indicators": self.context_indicators,
-            "related_to": self.related_to,
-            "match_score": round(self.match_score, 3),
-            "match_method": self.match_method,
-            "neural_sim": self.neural_sim,
-            "jaccard_ctx": self.jaccard_ctx,
-            "levenshtein_name": self.levenshtein_name,
-            "label_match": self.label_match,
-        }
+        return asdict(self)
 
-
+# ========== OutBox
 @dataclass
 class OutboxEvent:
     """
@@ -499,7 +482,4 @@ class OutboxEvent:
     processed_at: Optional[str] = None
 
 
-@dataclass
-class NEResult:
-    chunks: List['Chunk'] = field(default_factory=list)
-    entities: List['Entity'] = field(default_factory=list)
+

@@ -19,7 +19,7 @@ class Settings:
    # ========= DataBases Config
    ELASTIC_SEARCH_HOST = os.getenv("ELASTIC_SEARCH_HOST", "http://localhost:9200")
    
-   VECTOR_DB_HOST = os.getenv("VECTOR_DB_HOST", "http://localhost")
+   VECTOR_DB_HOST = os.getenv("VECTOR_DB_HOST", "localhost")
    VECTOR_DB_PORT = os.getenv("VECTOR_DB_PORT", "6333")
    
    GRAPH_DB_URL = os.getenv("GRAPH_DB_HOST", "bolt://localhost:7687")
@@ -32,8 +32,13 @@ class Settings:
    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "kg_pass")
    POSTGRES_DB = os.getenv("POSTGRES_DB", "knowledge_graph")
    
+   REDIS_HOST = os.getenv("REDIS_HOST", "http://localhost")
+   REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+      
    DB_DATA_DIR = os.getenv("DB_DATA_DIR", "./checkpoints/db")
    DATASET_PATH = os.getenv("DATASET_PATH", "./checkpoints/ner_dataset.jsonl")
+   
+   
    # ======== OutBox Config
    OUTBOX_PATH = os.getenv("OUTBOX_PATH", "kg_outbox.sqlite3")
    # ======== LLM Config

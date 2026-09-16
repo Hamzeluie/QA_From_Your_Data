@@ -10,10 +10,10 @@ from config.settings import settings
 
 def get_relation_extractor(backend: str = "bert", **kwargs) -> IExtractor:
     if backend == "llm":
-        from ingestion.models.llm.llm_extractors import DSPyRelationExtractor
+        from ingestion.models.llm.relation_extractor import DSPyRelationExtractor
         target_cls = DSPyRelationExtractor
     elif backend == "bert":
-        from ingestion.models.bert.bert_extractors import BertRelationExtractor
+        from ingestion.models.bert.relation_extractor import BertRelationExtractor
         target_cls = BertRelationExtractor
     else:
         raise ValueError(f"Unknown backend: {backend}")
@@ -46,10 +46,10 @@ def get_relation_extractor(backend: str = "bert", **kwargs) -> IExtractor:
 
 def get_ner_extractor(backend: str = "bert", **kwargs) -> IExtractor:
     if backend == "llm":
-        from ingestion.models.llm.llm_extractors import DSPyNERExtractor
+        from ingestion.models.llm.ner_extractor import DSPyNERExtractor
         target_cls = DSPyNERExtractor
     elif backend == "bert":
-        from ingestion.models.bert.bert_extractors import BertNERExtractor
+        from ingestion.models.bert.ner_extractor import BertNERExtractor
         target_cls = BertNERExtractor
     else:
         raise ValueError(f"Unknown backend: {backend}")
@@ -82,10 +82,10 @@ def get_ner_extractor(backend: str = "bert", **kwargs) -> IExtractor:
 
 def get_coref_resolver(backend: str = "bert", **kwargs) -> IExtractor:
     if backend == "llm":
-        from ingestion.models.llm.llm_extractors import DSPyCorefResolver
+        from ingestion.models.llm.coref_extractor import DSPyCorefResolver
         target_cls = DSPyCorefResolver
     elif backend == "bert":
-        from ingestion.models.bert.bert_extractors import BertCorefResolver
+        from ingestion.models.bert.coref_extractor import BertCorefResolver
         target_cls = BertCorefResolver
     else:
         raise ValueError(f"Unknown backend: {backend}")
@@ -118,7 +118,7 @@ def get_coref_resolver(backend: str = "bert", **kwargs) -> IExtractor:
     
     
 if __name__ == "__main__":
-    from shared.data_classes import (Entity, Relation, EntityLabels, DisambiguationStatus)
+    from storage.data_classes import (MentionEntity, Relation, EntityLabels, DisambiguationStatus)
     # ── CONFIG: switch here ──
     BACKEND = "llm"  #  "bert" or "llm"
     text = "Apple Inc. was founded by Steve Jobs. He served as the CEO of the company. The firm is headquartered in Cupertino."
@@ -146,14 +146,14 @@ if __name__ == "__main__":
     """
     
     # ── Run RELATION EXTRACTION ──
-    """
+    # """
     resolved_entities = [
-        Entity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
-        Entity(text='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=1.0, canonical_name='Steve Jobs', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
-        Entity(text='Cupertino', label=EntityLabels.LOC, start=104, end=113, mention_sentence='The firm is headquartered in <Cupertino>.', confidence=1.0, canonical_name='Cupertino', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
-        Entity(text='He', label=EntityLabels.PER, start=38, end=40, mention_sentence='<He> served as the CEO of the company.', confidence=0.93, canonical_name='Steve Jobs', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to='Steve Jobs'),
-        Entity(text='the company', label=EntityLabels.ORG, start=62, end=73, mention_sentence='He served as the CEO of <the company>.', confidence=0.94, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to='Apple Inc.'),
-        Entity(text='The firm', label=EntityLabels.ORG, start=75, end=83, mention_sentence='<The firm> is headquartered in Cupertino.', confidence=0.94, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to='Apple Inc.')
+        MentionEntity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
+        MentionEntity(text='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=1.0, canonical_name='Steve Jobs', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
+        MentionEntity(text='Cupertino', label=EntityLabels.LOC, start=104, end=113, mention_sentence='The firm is headquartered in <Cupertino>.', confidence=1.0, canonical_name='Cupertino', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
+        MentionEntity(text='He', label=EntityLabels.PER, start=38, end=40, mention_sentence='<He> served as the CEO of the company.', confidence=0.93, canonical_name='Steve Jobs', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to='Steve Jobs'),
+        MentionEntity(text='the company', label=EntityLabels.ORG, start=62, end=73, mention_sentence='He served as the CEO of <the company>.', confidence=0.94, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to='Apple Inc.'),
+        MentionEntity(text='The firm', label=EntityLabels.ORG, start=75, end=83, mention_sentence='<The firm> is headquartered in Cupertino.', confidence=0.94, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to='Apple Inc.')
         ]
     relation_extractor = get_relation_extractor(BACKEND, 
                                                 model_name="distilbert-base-uncased",
@@ -163,4 +163,4 @@ if __name__ == "__main__":
                                                 threshold=0)
     relations = relation_extractor(text, resolved_entities, "user", "1")
     print(relations)
-    """
+    # """

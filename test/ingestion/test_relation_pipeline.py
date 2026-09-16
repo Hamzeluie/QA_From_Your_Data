@@ -3,7 +3,7 @@ import pandas as pd
 from unittest.mock import MagicMock
 
 from ingestion.relation_pipeline import RelationPipeline
-from shared.data_classes import Relation
+from QA_From_Your_Data.storage.data_classes import Relation
 
 pytestmark = pytest.mark.integration
 

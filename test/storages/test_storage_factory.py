@@ -12,7 +12,7 @@ class TestStorageFactory:
         assert factory.redis is not None
 
     def test_end_to_end_write_and_read(self, factory, tid, mock_embedder):
-        from shared.data_classes import Entity
+        from QA_From_Your_Data.storage.data_classes import Entity
 
         factory.neo4j.upsert_entity(
             canonical=f"FactoryEnt_{tid}",

@@ -10,7 +10,7 @@ from typing import List, Dict, Optional, Any
 from neo4j import GraphDatabase, Driver, Session
 
 from storage.base import AbstractEntityStore
-from shared.data_classes import CandidateResult, OutboxEvent
+from storage.data_classes import CandidateResult, OutboxEvent, MentionEntity, Relation
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,6 @@ class Neo4jEntityStore(AbstractEntityStore):
         ]
         indexes = [
             "CREATE INDEX entity_label_idx IF NOT EXISTS FOR (e:Entity) ON (e.label)",
-            "CREATE INDEX entity_source_idx IF NOT EXISTS FOR (e:Entity) ON (e.source)",
             "CREATE INDEX entity_updated_idx IF NOT EXISTS FOR (e:Entity) ON (e.updated_at)",
             "CREATE INDEX doc_id_idx IF NOT EXISTS FOR (d:Document) ON (d.doc_id)",
         ]
@@ -56,23 +55,12 @@ class Neo4jEntityStore(AbstractEntityStore):
                     logger.warning(f"Schema init warning: {e}")
 
     # ── Write ─────────────────────────────────────────────────────────────────
-    def upsert_entity(
-        self,
-        canonical: str,
-        label: str,
-        aliases: List[str],
-        summary: Optional[str] = None,
-        source: str = "unknown",
-        related_to: Optional[List[str]] = None,
-        context_indicators: Optional[List[str]] = None,
-        embedding_id: Optional[str] = None,
-    ) -> None:
+    def upsert_entity(self, candidate:CandidateResult, embedding_id:str) -> None:
         cypher = """
         MERGE (e:Entity {canonical: $canonical})
         ON CREATE SET e.created_at = datetime(), e.mentions = 0
         SET e.label = $label,
             e.summary = $summary,
-            e.source = $source,
             e.embedding_id = $embedding_id,
             e.updated_at = datetime()
         WITH e
@@ -114,45 +102,32 @@ class Neo4jEntityStore(AbstractEntityStore):
         CREATE (o)-[:FOR_ENTITY]->(e)
         """
         payload = {
-            "canonical": canonical,
-            "label": label,
-            "aliases": aliases,
-            "summary": summary,
-            "source": source,
-            "context_indicators": context_indicators,
-            "related_to": related_to,
+            "canonical": candidate.canonical,
+            "label": candidate.label,
+            "aliases": candidate.aliases,
+            "summary": candidate.summary,
+            "context_indicators": candidate.context_indicators,
+            "related_to": candidate.related_to,
         }
         with self._driver.session(database=self.database) as session:
             session.run(
                 cypher,
-                canonical=canonical,
-                label=label,
-                aliases=list(set(aliases)),
-                summary=summary or "",
-                source=source,
+                canonical=candidate.canonical,
+                label=candidate.label,
+                aliases=list(set(candidate.aliases)),
+                summary=candidate.summary or "",
                 embedding_id=embedding_id,
-                context_indicators=list(set(context_indicators or [])),
-                related_to=list(set(related_to or [])),
+                context_indicators=list(set(candidate.context_indicators or [])),
+                related_to=list(set(candidate.related_to or [])),
                 event_id=str(uuid.uuid4()),
                 payload_json=json.dumps(payload, ensure_ascii=False),
                 targets=["es", "qdrant", "redis"],
             )
-            
-    def create_relation(
-        self,
-        subject: str,
-        predicate: str,
-        obj: str,
-        doc_id: str,
-        confidence: float,
-        provisional: bool,
-        relation_id: str,
-        evidence: List[str],
-        chunk_id: Optional[str] = None,
-    ) -> None:
+                   
+    def create_relation(self, relation: Relation) -> None:
         cypher = """
         MATCH (sub:Entity {canonical: $subject})
-        MATCH (ob:Entity {canonical: $obj})
+        MATCH (ob:Entity {canonical: $object})
         MERGE (sub)-[r:PREDICT {relation_id: $relation_id}]->(ob)
         SET r.predicate = $predicate,
             r.doc_id = $doc_id,
@@ -160,20 +135,28 @@ class Neo4jEntityStore(AbstractEntityStore):
             r.provisional = $provisional,
             r.evidence = $evidence,
             r.chunk_id = $chunk_id,
+            r.needs_review = $needs_review,
+            r.mention_sentence = $mention_sentence,
+            r.subject_label = $subject_label,
+            r.object_label = $object_label,
             r.created_at = datetime()
         """
         with self._driver.session(database=self.database) as session:
             session.run(
                 cypher,
-                subject=subject,
-                obj=obj,
-                predicate=predicate,
-                relation_id=relation_id,
-                doc_id=doc_id,
-                confidence=confidence,
-                provisional=provisional,
-                evidence=evidence,
-                chunk_id=chunk_id,
+                subject=relation.subject,
+                object=relation.object,
+                predicate=relation.predicate,
+                relation_id=relation.relation_id,
+                doc_id=relation.doc_id,
+                confidence=relation.confidence,
+                provisional=relation.provisional,
+                evidence=relation.evidence,
+                chunk_id=relation.chunk_id,
+                needs_review=relation.needs_review,
+                mention_sentence=relation.mention_sentence,
+                subject_label=relation.subject_label,
+                object_label=relation.object_label,
             )
 
     # ── Read ──────────────────────────────────────────────────────────────────
@@ -182,7 +165,7 @@ class Neo4jEntityStore(AbstractEntityStore):
         cypher = """
         MATCH (a:Alias {normalized: $normalized})-[:ALIAS_OF]->(e:Entity)
         RETURN e {
-            .canonical, .label, .summary, .source, .embedding_id,
+            .canonical, .label, .summary, .embedding_id,
             aliases: [(a2:Alias)-[:ALIAS_OF]->(e) | a2.normalized],
             related: [(e)-[:RELATED_TO]->(t) | t.canonical]
         } AS entity
@@ -195,7 +178,7 @@ class Neo4jEntityStore(AbstractEntityStore):
         cypher = """
         MATCH (e:Entity {canonical: $canonical})
         RETURN e {
-            .canonical, .label, .summary, .source, .embedding_id,
+            .canonical, .label, .summary, .embedding_id,
             aliases: [(a:Alias)-[:ALIAS_OF]->(e) | a.normalized],
             related: [(e)-[:RELATED_TO]->(t) | t.canonical]
         } AS entity
@@ -436,7 +419,6 @@ class Neo4jEntityStore(AbstractEntityStore):
             related_to=rec["related"] or [],
             match_score=round(float(rec["score"]), 3),
             match_method=rec["method"],
-            source="neo4j",
         )
     
     # ── Helpers ─────────────────────────────────────────────────────────────

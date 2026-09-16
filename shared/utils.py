@@ -1,13 +1,10 @@
 from typing import List, Dict, Optional, Tuple
 import os
 import re
-import requests
-import json
 from datetime import datetime, timedelta
-from shared.data_classes import Entity, DisambiguationStatus, EntityLabels
 from sentence_transformers import SentenceTransformer
 import spacy
-from config.settings import settings
+from rapidfuzz import fuzz
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from dateutil import parser as date_parser
 try:
@@ -23,6 +20,17 @@ def jaccard_similarity(text1: str, text2: str) -> float:
     words2 = set(re.findall(r'\w+', text2.lower()))
     intersection = len(words1 & words2)
     union = len(words1 | words2)
+    return intersection / union if union > 0 else 0.0
+
+def char_ngram_jaccard(text1: str, text2: str, n: int = 3) -> float:
+    def get_ngrams(text, n):
+        padded = " " * (n - 1) + text + " " * (n - 1)
+        return set(padded[i:i+n] for i in range(len(padded) - n + 1))
+    
+    ngrams1 = get_ngrams(text1, n)
+    ngrams2 = get_ngrams(text2, n)
+    intersection = len(ngrams1 & ngrams2)
+    union = len(ngrams1 | ngrams2)
     return intersection / union if union > 0 else 0.0
 
 def jaro_winkler(text1: str, text2: str, p: float = 0.1) -> float:
@@ -118,11 +126,9 @@ def levenshtein_ratio(s1: str, s2: str) -> float:
     m = max(len(s1), len(s2))
     return 1.0 - (d / m) if m > 0 else 1.0
 
-def format_data(df):
-    my_dict = {row["original_text"]: {"canonical_name": row["canonical_name"], "entity_label": row["entity_label"], "aliases": [], "context_indicators": [], "related_to": [], "fetch_wiki": True, "wiki_summary": row["wiki_summary"], "wiki_url": row["wiki_url"]} for _, row in df.iterrows()}
-    return json.dumps(my_dict, indent=4)
-
-
+def fuzzy_partial_ration(text1, text2):
+    return fuzz.partial_ratio(text1, text2)
+    
 def _regex_sentence_spans(text: str) -> List[Tuple[str, int, int]]:
     """Return (sentence_text, start, end) tuples with exact offsets into `text`."""
     pattern = re.compile(r'(?<=[.!?])\s+(?=[A-Z])|\.(?=[A-Z])')
@@ -210,7 +216,6 @@ def semantic_sentence_chunk_v1(text, embed_model:SentenceTransformer, nlp:spacy=
 
     return chunks
 
-
 def extract_exact_sentence(
     doc_text: str,
     start_char: int,
@@ -221,8 +226,8 @@ def extract_exact_sentence(
     marker_end: str = ">",
 ) -> str:
     """
-    Extract the sentence containing the entity [start_char:end_char] and
-    wrap the entity with marker_start / marker_end.
+    Extract the sentence containing the MentionEntity [start_char:end_char] and
+    wrap the MentionEntity with marker_start / marker_end.
     """
     span = _find_sentence_span(doc_text, start_char, end_char, use_nlp, nlp)
 
@@ -233,7 +238,7 @@ def extract_exact_sentence(
         sent_start, sent_end = span
         sentence = doc_text[sent_start:sent_end]
 
-    # Entity offsets relative to the extracted sentence
+    # MentionEntity offsets relative to the extracted sentence
     rel_start = max(0, start_char - sent_start)
     rel_end = max(rel_start, end_char - sent_start)
 
@@ -246,7 +251,6 @@ def extract_exact_sentence(
     )
     return highlighted.strip()
 
-
 def _find_sentence_span(
     doc_text: str,
     start_char: int,
@@ -254,7 +258,7 @@ def _find_sentence_span(
     use_nlp: bool,
     nlp: Optional[spacy.language.Language],
 ) -> Optional[Tuple[int, int]]:
-    """Return the (start, end) char span of the sentence containing the entity."""
+    """Return the (start, end) char span of the sentence containing the MentionEntity."""
 
     # 1. spaCy sentence segmentation
     if use_nlp and nlp is not None:
@@ -268,7 +272,6 @@ def _find_sentence_span(
 
     # 2. Regex fallback with position tracking
     return _find_sentence_span_regex(doc_text, start_char, end_char)
-
 
 def _find_sentence_span_regex(
     doc_text: str, start_char: int, end_char: int
@@ -296,7 +299,6 @@ def _find_sentence_span_regex(
 
     return None
 
-
 def _locate_mention(sentence: str, text: str, used_spans: set) -> tuple[int, int]:
     """Return the first (start, end) occurrence of `text` not already used."""
     for occ_start in _find_all_occurrences(sentence, text):
@@ -305,7 +307,6 @@ def _locate_mention(sentence: str, text: str, used_spans: set) -> tuple[int, int
             used_spans.add((occ_start, occ_end))
             return occ_start, occ_end
     return -1, -1
-
 
 def _find_all_occurrences(text: str, substring: str) -> list[int]:
     """Return start indices of all non-overlapping occurrences."""
@@ -320,273 +321,6 @@ def _find_all_occurrences(text: str, substring: str) -> list[int]:
         occurrences.append(idx)
         start = idx + len(substring)  # non-overlapping
     return occurrences
-
-class WikipediaEntitySummarizer:
-    LABEL_SIGNATURES = {
-        EntityLabels.PER.value: [
-            "born", "politician", "businessman", "businesswoman", "actor", "actress",
-            "author", "scientist", "footballer", "musician", "singer", "CEO",
-            "entrepreneur", "engineer", "inventor", "philanthropist", "artist",
-            "is a ", "was a ", "is an ", "was an "
-        ],
-        EntityLabels.ORG.value: [
-            "company", "corporation", "inc.", "ltd", "organization", "firm",
-            "multinational", "headquartered in", "founded in", "subsidiary of",
-            "publicly traded", "listed on", "stock exchange", "enterprise"
-        ],
-        EntityLabels.LOC.value: [
-            "country", "city", "state", "capital", "republic", "kingdom",
-            "province", "county", "municipality", "located in", "population of",
-            "island", "continent", "territory"
-        ],
-        EntityLabels.FAC.value: [
-            "airport", "bridge", "highway", "building", "station", "hospital",
-            "university", "museum", "stadium", "located in", "built in"
-        ],
-        EntityLabels.PRODUCT.value: [
-            "software", "device", "car", "phone", "game", "console", "product",
-            "launched in", "released by", "developed by", "chatbot", "model",
-            "series", "platform", "application", "app"
-        ],
-        EntityLabels.TECHNOLOGY.value: [
-            "technology", "artificial intelligence", "machine learning",
-            "deep learning", "neural network", "algorithm", "computational",
-            "software framework", "model", "system", "platform", "architecture",
-            "is a field of", "is a branch of", "is a type of"
-        ],
-        EntityLabels.EVENT.value: [
-            "war", "battle", "conference", "festival", "olympics", "tournament",
-            "held in", "took place", "anniversary", "celebration"
-        ],
-        EntityLabels.WORK_OF_ART.value: [
-            "novel", "book", "film", "movie", "song", "album", "painting",
-            "written by", "directed by", "composed by", "published in"
-        ],
-        EntityLabels.LAW.value: [
-            "act", "treaty", "constitution", "amendment", "law", "bill",
-            "signed into law", "ratified", "legal"
-        ],
-        EntityLabels.LANGUAGE.value: [
-            "language", "dialect", "spoken in", "official language", "lingua franca"
-        ],
-        EntityLabels.DATE.value: [
-            "january", "february", "march", "april", "may", "june",
-            "july", "august", "september", "october", "november", "december"
-        ],
-        EntityLabels.TIME.value: [
-            "morning", "afternoon", "evening", "night", "midnight", "noon",
-            "a.m.", "p.m.", "o'clock", "hour", "minute", "second"
-        ],
-        EntityLabels.MONEY.value: [
-            "dollar", "euro", "pound", "yen", "usd", "eur", "gbp",
-            "million", "billion", "trillion", "budget", "revenue", "cost"
-        ],
-        EntityLabels.PERCENT.value: [
-            "percent", "percentage", "%", "proportion", "rate", "share"
-        ],
-        EntityLabels.QUANTITY.value: [
-            "meter", "kilometer", "mile", "kilogram", "ton", "liter",
-            "degree", "celsius", "fahrenheit", "inch", "foot", "pound"
-        ],
-        EntityLabels.CARDINAL.value: [
-            "one", "two", "three", "hundred", "thousand", "million"
-        ],
-        EntityLabels.ORDINAL.value: [
-            "first", "second", "third", "fourth", "fifth", "last"
-        ],
-        EntityLabels.NORP.value: [
-            "american", "european", "asian", "african", "christian", "muslim",
-            "jewish", "buddhist", "hindu", "democrat", "republican", "conservative",
-            "liberal", "socialist", "nationality", "ethnic"
-        ],
-        EntityLabels.MISC.value: [
-            "award", "honor", "title", "degree", "religion", "ideology",
-            "culture", "tradition", "custom", "mythology", "legend"
-        ],
-        EntityLabels.NUM.value: [
-            "number", "amount", "total", "sum", "count", "quantity"
-        ],
-    }
-
-    def __init__(self, embedding:SentenceTransformer=None):
-        self.wiki_api = "https://en.wikipedia.org/w/api.php"
-        self.headers = {"User-Agent": "EntityLinkerBot/1.0"}
-        if embedding:
-            self.embedder = embedding
-        else:
-            if os.path.isdir(settings.EMBEDDING_MODEL_PATH):
-                self.embedder = SentenceTransformer(settings.EMBEDDING_MODEL_PATH)
-            else:
-                self.embedder = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
-                self.embedder.save(settings.EMBEDDING_MODEL_PATH)
-        
-    def search_wikipedia(self, entity: str, limit: int = 5) -> List[Dict]:
-        params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": entity,
-            "srlimit": limit,
-            "format": "json"
-        }
-        try:
-            response = requests.get(self.wiki_api, params=params,
-                                   headers=self.headers, timeout=10)
-            data = response.json()
-        except Exception:
-            return []
-
-        candidates = []
-        for result in data.get("query", {}).get("search", []):
-            title = result["title"]
-            snippet = self._clean_html(result.get("snippet", ""))
-            url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
-            candidates.append({
-                "title": title,
-                "pageid": result["pageid"],
-                "snippet": snippet,
-                "url": url
-            })
-        return candidates
-
-    def _clean_html(self, text: str) -> str:
-        text = re.sub(r'<span class="searchmatch">(.*?)</span>', r'\1', text)
-        text = re.sub(r'<.*?>', '', text)
-        return text.strip()
-
-    def _rank_candidates(self,
-                         entity: str,
-                         context: str,
-                         candidates: List[Dict],
-                         ner_label: Optional[str] = None) -> Optional[Dict]:
-        if not candidates:
-            return None
-
-        label_hints = {
-            "ORG": ["Inc.", "Company", "Corporation", "Ltd", "Group", "Airlines", "Bank"],
-            "PERSON": ["born", "politician", "actor", "author", "scientist", "footballer"],
-            "GPE": ["country", "city", "state", "capital", "republic", "kingdom"],
-            "PRODUCT": ["software", "device", "car", "phone", "game", "console"],
-            "TECHNOLOGY": ["software", "algorithm", "intelligence", "learning", "network", "model"],
-        }
-
-        context_vec = None
-        if self.embedder and context:
-            context_vec = self.embedder.encode([context], convert_to_numpy=True)
-
-        scored = []
-        for cand in candidates:
-            score = 0.0
-            snippet = cand["snippet"]
-            title = cand["title"]
-
-            if context_vec is not None and snippet:
-                snippet_vec = self.embedder.encode([snippet], convert_to_numpy=True)
-                sim = float(sk_cosine_similarity(context_vec, snippet_vec)[0][0])
-                score += sim * 0.6
-
-            context_words = set(context.lower().split())
-            candidate_text = (title + " " + snippet).lower()
-            overlap = len(context_words & set(candidate_text.split()))
-            score += (overlap / max(len(context_words), 1)) * 0.3
-
-            if ner_label and ner_label in label_hints:
-                if any(h.lower() in candidate_text for h in label_hints[ner_label]):
-                    score += 0.1
-
-            if "disambiguation" in title.lower():
-                score -= 0.5
-
-            scored.append((score, cand))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return scored[0][1] if scored else None
-
-    def extract_summary(self, title: str, max_sentences: int = 2) -> str:
-        params = {
-            "action": "query",
-            "prop": "extracts",
-            "titles": title,
-            "exintro": True,
-            "exsentences": max_sentences,
-            "explaintext": True,
-            "format": "json"
-        }
-        try:
-            response = requests.get(self.wiki_api, params=params,
-                                   headers=self.headers, timeout=10)
-            data = response.json()
-        except Exception:
-            return ""
-
-        pages = data.get("query", {}).get("pages", {})
-        for page_data in pages.values():
-            extract = page_data.get("extract", "")
-            if extract:
-                return self._normalize_summary(extract)
-        return ""
-
-    def _normalize_summary(self, text: str) -> str:
-        text = re.sub(r'\s*\([^)]*(disambiguation|company|fruit|disambiguation page)[^)]*\)', '', text)
-        text = re.sub(r'\[\d+\]', '', text)
-        text = re.sub(r'For (other uses|the company|the fruit)[,.].*?(?=\n|$)', '', text)
-        text = " ".join(text.split())
-        return text.strip()
-
-    def classify_from_summary(self, summary: str, fallback_label: Optional[str] = None) -> str:
-        """
-        Scan the Wikipedia summary for label-indicative keywords.
-        Returns the best-matching label or the fallback.
-        """
-        if not summary:
-            return fallback_label or "UNKNOWN"
-
-        summary_lower = summary.lower()
-        scores = {}
-
-        for ent_label, phrases in self.LABEL_SIGNATURES.items():
-            score = sum(1 for phrase in phrases if phrase.lower() in summary_lower)
-            if score:
-                scores[ent_label] = score
-
-        if scores:
-            return max(scores, key=scores.get)
-
-        # Heuristic: if the summary mentions years of birth/death, it's likely a person
-        if re.search(r'\b\d{4}\s*–\s*\d{4}\b', summary) or "born" in summary_lower:
-            return "PERSON"
-
-        return fallback_label or "UNKNOWN"
-
-    def summarize(self,entity: Entity) -> Optional[Entity]:
-        candidates = self.search_wikipedia(entity.text)
-        if not candidates:
-            return None
-
-        best = self._rank_candidates(entity.text, entity.mention_sentence, candidates, entity.label)
-        if not best:
-            return None
-
-        entity.summary = self.extract_summary(best["title"])
-
-        # ── INFER LABEL FROM SUMMARY (override spaCy guess if confident) ──
-        wiki_inferred_label = self.classify_from_summary(entity.summary, fallback_label=entity.label)
-
-        confidence = 0.5
-        if self.embedder and entity.summary:
-            ctx_vec = self.embedder.encode([entity.mention_sentence], convert_to_numpy=True)
-            sum_vec = self.embedder.encode([entity.summary], convert_to_numpy=True)
-            confidence = float(sk_cosine_similarity(ctx_vec, sum_vec)[0][0])
-
-        if confidence >= 0.5:
-            entity.status = DisambiguationStatus.NEW_ENTITY
-        else:
-            entity.status = DisambiguationStatus.UNRESOLVED
-        entity.canonical_name = best["title"]
-        entity.confidence = confidence
-        entity.context_clues = [f"Wikipedia match: {best['title']}", f"Label inferred from summary: {wiki_inferred_label}"]
-        entity.needs_review = True
-        return entity
-    
 
 class ValueNormalizer:
     RELATIVE_DATES = {
@@ -692,4 +426,63 @@ class ValueNormalizer:
             "canonical": f"{currency} {value:.0f}"
         }
 
+
+
+class _UnionFind:
+    """Disjoint-set for O(α(n)) mention merging."""
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, x: int) -> int:
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])
+        return self.parent[x]
+
+    def union(self, x: int, y: int) -> None:
+        px, py = self.find(x), self.find(y)
+        if px == py:
+            return
+        if self.rank[px] < self.rank[py]:
+            px, py = py, px
+        self.parent[py] = px
+        if self.rank[px] == self.rank[py]:
+            self.rank[px] += 1
+
+def _normalize_mention(text: str) -> str:
+    """
+    Normalize mention text for MentionEntity resolution:
+    1. Lowercase
+    2. Replace internal grouping punctuation (parentheses, brackets) with spaces
+    3. Strip outer punctuation and whitespace
+    4. Collapse all multiple spaces into a single space
+    """
+    # 1. Lowercase
+    text = text.lower()
+    
+    # 2. Replace internal grouping punctuation with a space.
+    # We use a space instead of empty string to prevent "bashir(alexander" 
+    # from merging into "bashiralexander".
+    text = re.sub(r"[\(\)\[\]\{\}]", " ", text)
+    
+    # 3. Strip outer punctuation and whitespace from the edges
+    text = text.strip("\"'.,;:!? \t\n\r")
+    
+    # 4. Collapse any remaining multiple whitespaces into a single space
+    text = re.sub(r"\s+", " ", text)
+    
+    return text
+
+def _labels_compatible(l1, l2) -> bool:
+    """Allow exact match or PER↔MISC (common for fictional characters)."""
+    if l1 == l2:
+        return True
+    # Handle both enum members and raw strings
+    s1 = l1.name if hasattr(l1, "name") else str(l1)
+    s2 = l2.name if hasattr(l2, "name") else str(l2)
+    per_types = {"PER", "PERSON"}
+    misc_types = {"MISC"}
+    if (s1 in per_types and s2 in misc_types) or (s1 in misc_types and s2 in per_types):
+        return True
+    return False
 

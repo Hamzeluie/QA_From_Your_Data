@@ -3,7 +3,7 @@ import pandas as pd
 from unittest.mock import patch, MagicMock
 
 from ingestion.unified_resolver import UnifiedEntityResolver
-from shared.data_classes import DisambiguationStatus, Entity, Chunk, EntityLabels
+from QA_From_Your_Data.storage.data_classes import DisambiguationStatus, Entity, Chunk, EntityLabels
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ class TestUnifiedResolverUnit:
         assert ent.status == DisambiguationStatus.RESOLVED
 
     def test_disambiguate_single_candidate(self, resolver, tid):
-        from shared.data_classes import CandidateResult
+        from QA_From_Your_Data.storage.data_classes import CandidateResult
         cands = [
             CandidateResult(
                 canonical=f"C_{tid}", label="PER", aliases=[f"A_{tid}"],
@@ -50,7 +50,7 @@ class TestUnifiedResolverUnit:
         assert result.canonical_name == f"C_{tid}"
 
     def test_disambiguate_ambiguous_low_score(self, resolver, tid):
-        from shared.data_classes import CandidateResult
+        from QA_From_Your_Data.storage.data_classes import CandidateResult
         cands = [
             CandidateResult(
                 canonical=f"C_{tid}", label="PER", aliases=[f"A_{tid}"],

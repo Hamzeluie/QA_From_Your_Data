@@ -7,7 +7,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config.settings import settings
 import pandas as pd
 from ingestion.entity_resolver import EntityResolver
-from shared.data_classes import EntityLabels
+from QA_From_Your_Data.storage.data_classes import EntityLabels
 
 
 resolver = EntityResolver(

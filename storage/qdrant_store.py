@@ -6,11 +6,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import logging
 from typing import List, Dict, Optional, Any
 import uuid
+import httpx
 import numpy as np
+from storage.data_classes import Chunk
 from storage.base import AbstractVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+    Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchAny
 )
 
 logger = logging.getLogger(__name__)
@@ -64,21 +66,22 @@ class QdrantVectorStore(AbstractVectorStore):
 
     def upsert_chunk(
         self,
-        doc_id: str,
-        chunk_id: str,
+        chunk:Chunk,
         vector: List[float],
-        text: str,
-        owner_id: str,
+        mentioned_entities: List[str] = None,
+
     ) -> None:
-        chunk_key = f"{doc_id}_{chunk_id}"
+        chunk_key = f"{chunk.doc_id}_{chunk.chunk_id}"
         point = PointStruct(
             id=self._to_uuid(chunk_key),
             vector=vector,
             payload={
-                "doc_id": doc_id,
-                "chunk_id": chunk_id,
-                "text": text,
-                "owner_id": owner_id,
+                "doc_id": chunk.doc_id,
+                "chunk_id": chunk.chunk_id,
+                "text": chunk.sentence,
+                "owner_id": chunk.owner_id,
+                "mentioned_entities": mentioned_entities or [],
+
             }
         )
         self.client.upsert(collection_name="chunk_embeddings", points=[point])
@@ -86,8 +89,6 @@ class QdrantVectorStore(AbstractVectorStore):
     def search_similar_entities(
         self, vector: List[float], top_k: int = 10, filter: Optional[Dict] = None
     ) -> List[Dict]:
-        import httpx
-
         body = {
             "vector": vector,
             "limit": top_k,
@@ -113,7 +114,32 @@ class QdrantVectorStore(AbstractVectorStore):
             }
             for r in results
         ]
-            
+    
+    def find_chunks_by_entity(self, entity_name: str, top_k: int = 5) -> List[Dict]:
+        """Finds raw chunks that mention this entity, used as a fallback."""
+        search_filter = Filter(
+            must=[
+                FieldCondition(key="mentioned_entities", match=MatchAny(any=[entity_name]))
+            ]
+        )        
+        results = self.client.search(
+            collection_name="chunk_embeddings",
+            query_vector=[0.0] * self.vector_size, # Dummy vector, relying on filter
+            query_filter=search_filter,
+            limit=top_k,
+            with_payload=True,
+        )
+
+        return [
+            {
+                "chunk_id": r.payload.get("chunk_id"),
+                "doc_id": r.payload.get("doc_id"),
+                "text": r.payload.get("text"),
+                "score": 1.0,
+            }
+            for r in results
+        ]    
+      
     def fetch_all(self, collection_name: str) -> List[Dict]:
         """Scroll entire collection. Used by EntityMerger."""
         all_points = []

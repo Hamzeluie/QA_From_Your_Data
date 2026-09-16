@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 
 # Import domain objects from shared (cross-cutting)
-from shared.data_classes import CandidateResult
+from storage.data_classes import CandidateResult
 
 
 class AbstractEntityStore(ABC):
@@ -130,17 +130,20 @@ class AbstractTextSearch(ABC):
     def remove_entity(self, canonical: str) -> None:
         """Delete from ES (e.g., after merge)."""
 
-
 class AbstractStateStore(ABC):
-    """ClickHouse abstraction for pipeline state, queue, audit, relations."""
+    """Abstract base class for pipeline state, entity resolution queue, and relations storage."""
+
+    # ── Document State Machine ──────────────────────────────────────────────
 
     @abstractmethod
     def init_tables(self) -> None:
         """CREATE TABLE IF NOT EXISTS all tables."""
+        pass
 
     @abstractmethod
     def create_document(self, doc_id: str, owner_id: str) -> None:
         """Insert initial row with status='uploaded'."""
+        pass
 
     @abstractmethod
     def transition_state(
@@ -150,49 +153,95 @@ class AbstractStateStore(ABC):
         Optimistic state transition using version counter.
         Returns True if successful.
         """
-
-    @abstractmethod
-    def enqueue_unresolved(
-        self,
-        resolution_id: str,
-        doc_id: str,
-        entity_row: Any,  # ResolvedEntity or dict
-        candidates_json: str,
-    ) -> None:
-        """Add to review queue."""
-
-    @abstractmethod
-    def resolve_unresolved(
-        self, resolution_id: str, canonical: str, user_id: str
-    ) -> None:
-        """Mark queue item resolved and set canonical."""
-
-    @abstractmethod
-    def log_mention(
-        self,
-        doc_id: str,
-        chunk_id: Optional[str],
-        canonical_name: str,
-        original_text: str,
-        entity_label: str,
-        mention_sentence: str,
-        start: int,
-        end: int,
-        confidence: float,
-        source: str,
-    ) -> None:
-        """Audit trail of every mention."""
-
-    @abstractmethod
-    def insert_relations(self, relations: List[Any]) -> None:
-        """Batch insert to ClickHouse relations table."""
+        pass
 
     @abstractmethod
     def get_documents_by_state(self, status: str, limit: int = 100) -> List[Dict]:
         """For backfill / reprocessing jobs."""
+        pass
 
     @abstractmethod
-    def close(self) -> None: ...
+    def get_document_state(self, doc_id: str) -> Optional[Dict]:
+        """Get the current state of a specific document."""
+        pass
+
+    # ── Unresolved Entities ─────────────────────────────────────────────────
+
+    @abstractmethod
+    def insert_unresolved(self, resolution_id: str, entity: Any) -> None:
+        """Add an unresolved entity to the review queue."""
+        pass
+
+    @abstractmethod
+    def resolve_unresolved(self, resolution_id: str, canonical: str, user_id: str) -> None:
+        """Move an entity from unresolved to resolved, setting the canonical name."""
+        pass
+
+    @abstractmethod
+    def get_unresolved_entities(self) -> List[Any]:
+        """Fetch all unresolved entities awaiting review."""
+        pass
+
+    # ── Resolved Entities (formerly Mentions) ───────────────────────────────
+
+    @abstractmethod
+    def insert_resolved_entity(self, entity: Any) -> None:
+        """Log a resolved entity mention to the audit trail."""
+        pass
+
+    @abstractmethod
+    def get_resolved_entities_by_canonical(self, canonical_name: str) -> List[Any]:
+        """Fetch resolved entities by their canonical name."""
+        pass
+
+    @abstractmethod
+    def get_resolved_entities_by_text(self, text: str) -> List[Any]:
+        """Fetch resolved entities by their original text (ILIKE)."""
+        pass
+
+    @abstractmethod
+    def get_resolved_entities_by_doc(self, doc_id: str) -> List[Any]:
+        """Fetch resolved entities for a specific document."""
+        pass
+
+    # ── Relations ───────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def insert_resolved_relations(self, relations: List[Any]) -> None:
+        """Batch insert resolved relations."""
+        pass
+
+    @abstractmethod
+    def insert_unresolved_relations(self, relations: List[Any]) -> None:
+        """Batch insert unresolved relations for review."""
+        pass
+
+    @abstractmethod
+    def resolve_unresolved_relation(self, relation_id: str, user_id: str) -> None:
+        """Move a relation from unresolved to resolved."""
+        pass
+
+    @abstractmethod
+    def get_resolved_relations_by_entity(self, canonical_name: str, limit: int = 200) -> List[Any]:
+        """Fetch resolved relations where the entity is subject or object."""
+        pass
+
+    @abstractmethod
+    def get_resolved_relations_by_predicate(self, doc_id: str, predicate: str, limit: int = 200) -> List[Any]:
+        """Fetch resolved relations by document and predicate."""
+        pass
+
+    @abstractmethod
+    def get_unresolved_relations(self, limit: int = 200) -> List[Any]:
+        """Fetch unresolved relations awaiting review."""
+        pass
+
+    # ── Lifecycle ───────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close any open database connections."""
+        pass
 
 class AbstractCache(ABC):
     """Redis abstraction: alias cache, candidate cache, distributed locks, pub/sub."""

@@ -10,12 +10,12 @@ import json
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 import pandas as pd
-from QA_From_Your_Data.ingestion.models.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
+from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
 import spacy
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from config.settings import settings
 from sentence_transformers import SentenceTransformer
-from shared.data_classes import (Entity,
+from QA_From_Your_Data.storage.data_classes import (Entity,
                                  EntityLabels, 
                                  DisambiguationStatus, 
                                  ResolvedEntity)
@@ -740,7 +740,12 @@ class EntityResolver:
             chunk_info.append((chunk["chunk_id"], chunk["chunk_text"]))
             all_entities.extend(chunk["entities"])
 
-        entences(document, all_entities), chunk_info
+        return all_entities, chunk_info
+    
+    def _extract_entities_with_coref(self, document:str):
+        entity_extracted = self._name_entity_recognition(document)
+        all_entities, chunk_info = self._chunk_entity_splitter(entity_extracted)
+        return self.coref.resolve_from_sentences(document, all_entities), chunk_info
         
     def process_document(self, document: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -884,6 +889,43 @@ class EntityResolver:
         print(f"[User Feedback] -> '{canonical}' "
               f"({entity_label}) registered with {len(alias_list)} alias(es).")
     
+    def _remove_subsumed_entities(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Drop entities whose character span is fully contained inside a larger
+        entity span in the same document. Prefer longer spans.
+        """
+        if df.empty:
+            return df
+
+        rows = df.to_dict("records")
+
+        # Sort by span length descending, then by start position
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: (r["end"] - r["start"], r["start"]),
+            reverse=True,
+        )
+
+        kept = []
+        kept_spans = []  # (doc_id, start, end)
+
+        for row in rows_sorted:
+            doc_id, s, e = row["doc_id"], row["start"], row["end"]
+
+            # Is this row fully contained inside an already-kept span?
+            is_subsumed = any(
+                doc_id == kd and s >= ks and e <= ke and (s != ks or e != ke)
+                for kd, ks, ke in kept_spans
+            )
+
+            if not is_subsumed:
+                kept.append(row)
+                kept_spans.append((doc_id, s, e))
+
+        # Restore original document order
+        kept_sorted = sorted(kept, key=lambda r: (r["doc_id"], r["start"]))
+        return pd.DataFrame(kept_sorted)
+
     def save_full_state(self,
                         path: str,
                         clean_df: pd.DataFrame = None,
@@ -1067,23 +1109,5 @@ class EntityResolver:
     def get_all_catalogs(self) -> pd.DataFrame:
         """Alias for get_entity_clusters()."""
         return self.catalog.stats()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

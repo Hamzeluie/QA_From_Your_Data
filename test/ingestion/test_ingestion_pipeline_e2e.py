@@ -3,7 +3,7 @@ import pandas as pd
 from unittest.mock import patch, MagicMock
 
 from ingestion.pipeline import IngestionPipeline
-from shared.data_classes import Chunk
+from QA_From_Your_Data.storage.data_classes import Chunk
 
 pytestmark = pytest.mark.integration
 

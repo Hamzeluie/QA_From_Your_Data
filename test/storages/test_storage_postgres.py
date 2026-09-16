@@ -43,7 +43,7 @@ class TestPostgresStateStore:
         # ClickHouse async ALTER; we can't easily read back without flush, so just assert no exception
 
     def test_log_mention(self, postgres_store, tid):
-        from shared.data_classes import Entity
+        from QA_From_Your_Data.storage.data_classes import Entity
         
         postgres_store.log_mention(
             Entity(doc_id=tid, 
@@ -59,7 +59,7 @@ class TestPostgresStateStore:
         )
 
     def test_insert_relations(self, postgres_store, tid):
-        from shared.data_classes import Relation
+        from QA_From_Your_Data.storage.data_classes import Relation
         rels = [
             Relation(
                 doc_id=tid, subject=f"S_{tid}", subject_label="PER",

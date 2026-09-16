@@ -4,12 +4,16 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 import os
-from typing import Optional
+import logging
+from typing import Optional, Union, List
 from storage.neo4j_store import Neo4jEntityStore
 from storage.postgres_store import PostgresStateStore
 from storage.qdrant_store import QdrantVectorStore
 from storage.elasticsearch_store import ElasticsearchEntitySearch
 from storage.redis_cache import RedisCache
+from storage.data_classes import MentionEntity, Relation, Chunk
+
+logger = logging.getLogger(__name__)
 
 
 class StorageFactory:
@@ -32,8 +36,8 @@ class StorageFactory:
             postgres_password=os.getenv("POSTGRES_PASSWORD", "kg_pass"),
             postgres_database=os.getenv("POSTGRES_DB", "knowledge_graph"),
             
-            qdrant_host=os.getenv("VECTOR_DB_URL", "http://localhost"),
-            qdrant_port=int(os.getenv("QDRANT_PORT", "6333")),
+            qdrant_host=os.getenv("VECTOR_DB_HOST", "localhost"),
+            qdrant_port=int(os.getenv("VECTOR_DB_PORT", "6333")),
 
             es_hosts=os.getenv("ELASTIC_SEARCH_HOST", "http://localhost:9200").split(","),
             es_user=os.getenv("ES_USER"),
@@ -151,3 +155,6 @@ class StorageFactory:
     def close_all(self) -> None:
         if self._neo4j:
             self._neo4j.close()
+    
+    
+    
