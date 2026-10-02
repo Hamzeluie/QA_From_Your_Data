@@ -1,23 +1,21 @@
-import sys
 from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
+from typing import List, Optional
 import logging
-from typing import List, Tuple, Optional
-import pandas as pd
+import asyncio
+from sentence_transformers import SentenceTransformer
 
-from storage.factory import StorageFactory
+from config.settings import settings
+from storage import OutBoxFactory, StorageFactory
+from domain import Chunk, MentionEntity, DocumentStatus
 from ingestion.unified_resolver import UnifiedEntityResolver
 from ingestion.relation_pipeline import RelationPipeline
-from storage.data_classes import Chunk, MentionEntity
 from ingestion.models.base import IExtractor
 
 
 logger = logging.getLogger(__name__)
 
 
-class IngestionPipeline:
+class IngestionPipeline_old:
     """
     High-level orchestrator for the full ingestion flow:
     NER → Entity Resolution → Relation Extraction → Chunk Indexing.
@@ -138,9 +136,102 @@ class IngestionPipeline:
                     )
                 except Exception as exc:
                     logger.warning(f"ES chunk index failed {chunk.chunk_id}: {exc}")
+         
+class IngestionPipeline:
+    def __init__(self,
+                 ner_model:IExtractor,
+                 coref_model:IExtractor,
+                 relation_extractor:IExtractor,
+                 
+                 storage_factory: Optional[StorageFactory] = None,
+                 run_demo:bool=False,
+                 wait_sec:int=10,
+                 ):
+        # ========= initial global variables
+        self.embedder = self._load_embedder()
+        self.is_running = True
+        self.wait_sec = wait_sec
+        self._document_outbox_task: asyncio.Task
+        self._storage_outbox_task: asyncio.Task
+        
+        # ========= initial storage and outbox        
+        self.storage_factory = storage_factory if storage_factory else StorageFactory()
+        self.outbox = OutBoxFactory(storage_factory=storage_factory)
+        
+        # ========= initial entity resolver
+        self.resolver = UnifiedEntityResolver(ner_model=ner_model, 
+                                              coref_model=coref_model, 
+                                              factory=self.storage_factory, 
+                                              embedder=self.embedder, 
+                                              run_demo=run_demo)
+        
+        # ========= initial relation extraction
+        self.relation_pipeline = RelationPipeline(extractor=relation_extractor,factory=self.storage_factory)
+        
+    def _load_embedder(self):
+        model_path = getattr(settings, "EMBEDDING_MODEL_PATH", "all-MiniLM-L6-v2")
+        return SentenceTransformer(model_path)
+
+    async def start(self):
+        self.is_running = True
+        self._storage_outbox_task = asyncio.create_task(self.outbox.outbox_poller.run(), name="run storage event proccessing")
+        self._document_outbox_task = asyncio.create_task(self._relation_extraction_loop(), name="run relation extraction step")
+              
+    async def stop(self):
+        self.is_running = False
+        tasks = [t for t in (self._document_outbox_task, self._storage_outbox_task) if t]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+    async def _relation_extraction_loop(self):
+        while self.is_running:
+            await asyncio.sleep(self.wait_sec)
+            
+            # 1. Get Documents with status ENTITIES_RESOLVED
+            for doc in self.outbox.get_documents_by_status(status=DocumentStatus.ENTITIES_RESOLVED):
+                try:
+                    # 2. Get Relation Extraction input parameters (canonicals, chunks)
+                    canonicals, chunks, event = self.outbox.get_canonicals_and_chunks(doc.doc_id)
                     
-                
+                    # 3. Relation Extraction 
+                    relations = self.relation_pipeline.extract_and_store(canonicals, chunks)
+                    
+                    # 4. Save results of Relation Extraction
+                    self.outbox.event_relation_extraction(event=event, relations=relations)
+                    
+                except Exception:
+                    logger.exception(f"relation extraction failed for {doc.doc_id}")
+                    self.outbox.transition_state(doc.doc_id, DocumentStatus.FAILD)
+                    
+    async def process_doc(self, owner_id: str, raw_text: str, source_name:str="process_doc"):
+        try:
+            # 1. Document state: uploaded
+            existing = self.outbox.get_doc(owner_id=owner_id, source_name=source_name)
+            if existing and existing.get("status") != DocumentStatus.FAILD:
+                logger.info(f"Document {existing.get("doc_id", "X")} already indexed; skipping.")
+                return {"status": "skipped", "reason": "already_indexed", "doc_id": existing.get("doc_id", "X")}
+
+            # 2. Create new Document and Event
+            event = self.outbox.event_create_document(owner_id=owner_id, source_name=source_name, raw_text=raw_text)
+            
+            # 3. Entity Resolution (NER + Coref + ER + Cross-doc + Merge)
+            chunks, canonicals, mentions = self.resolver.process_document(event.doc_id, raw_text, owner_id)
+            
+            # 4. Save results of Entity Resolution (chunks, canonicals, mentions)
+            event = self.outbox.event_entity_resolver(event=event, canonicals=canonicals, mentions=mentions, chunks=chunks)
+            
+            return {"status": "accepted", "doc_id": event.doc_id,
+                    "event_id": event.event_id, "pending_mentions": len(mentions)}
+        except:
+            logger.exception("process_doc failed")
+            if 'event' in locals():
+                self.outbox.delete_document(doc_id=event.doc_id)
+            raise        
+        
 if __name__ == "__main__":
+    print("DONE")
+    exit()
     from config.settings import settings
     from ingestion.models.factory import get_ner_extractor, get_coref_resolver, get_relation_extractor
     is_demo = True

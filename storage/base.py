@@ -1,14 +1,7 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Any
 import numpy as np
-
-# Import domain objects from shared (cross-cutting)
-from storage.data_classes import CandidateResult
+from domain import CandidateResult
 
 
 class AbstractEntityStore(ABC):
@@ -71,19 +64,20 @@ class AbstractEntityStore(ABC):
     @abstractmethod
     def close(self) -> None: ...
 
-
 class AbstractVectorStore(ABC):
     """Qdrant abstraction for semantic search."""
 
     @abstractmethod
     def init_collections(self) -> None:
         """Create collections if missing."""
+        pass
 
     @abstractmethod
     def upsert_entity_summary(
         self, canonical: str, vector: List[float], payload: Dict[str, Any]
     ) -> None:
         """Store entity summary embedding."""
+        pass
 
     @abstractmethod
     def search_similar_entities(
@@ -93,15 +87,17 @@ class AbstractVectorStore(ABC):
         Return list of {canonical, score, payload}.
         Used by CandidateFinder (neural re-rank) and CrossDocResolver.
         """
+        pass
 
     @abstractmethod
     def fetch_all(self, collection_name: str) -> List[Dict]:
         """Return all points with vectors. Used by EntityMerger."""
+        pass
 
     @abstractmethod
     def delete_entity(self, canonical: str) -> None:
         """Remove from vector index (e.g., after merge)."""
-
+        pass
 
 class AbstractTextSearch(ABC):
     """Elasticsearch abstraction for fuzzy alias/summary search."""

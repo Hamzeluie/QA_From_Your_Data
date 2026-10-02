@@ -1,8 +1,5 @@
-import sys
 from pathlib import Path
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 import os
 from dotenv import load_dotenv
 
@@ -13,6 +10,9 @@ class Settings:
    # ========= Embedding Config 
    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME","all-MiniLM-L6-v2")
    EMBEDDING_MODEL_PATH = os.getenv("EMBEDDING_MODEL_PATH","../model/all-MiniLM-L6-v2")
+   
+   INDEXING_EMBEDDER_NAME =  os.getenv("INDEXING_EMBEDDER_NAME","all-MiniLM-L6-v2")
+   INDEXING_EMBEDDER_PATH = os.getenv("EMBEDDING_MODEL_PATH","../model/all-MiniLM-L6-v2")
    # ========= Spacy Config 
    SPACY_MODEL_NAME = os.getenv("SPACY_MODEL_NAME","en_core_web_sm")
    SPACY_MODEL_PATH = os.getenv("SPACY_MODEL_PATH","../model/en_core_web_sm")

@@ -20,8 +20,7 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from collections import defaultdict
 import json
-
-from utils.utils import Entity, MatchResult
+from domain import Entity, MatchResult
 
 
 

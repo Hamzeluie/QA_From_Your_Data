@@ -118,12 +118,12 @@ def get_coref_resolver(backend: str = "bert", **kwargs) -> IExtractor:
     
     
 if __name__ == "__main__":
-    from storage.data_classes import (MentionEntity, Relation, EntityLabels, DisambiguationStatus)
+    from domain import (MentionEntity, Relation, EntityLabels, DisambiguationStatus)
     # ── CONFIG: switch here ──
     BACKEND = "llm"  #  "bert" or "llm"
     text = "Apple Inc. was founded by Steve Jobs. He served as the CEO of the company. The firm is headquartered in Cupertino."
     # ── Run NER ──    
-    """
+    # """
     ner = get_ner_extractor(BACKEND, 
                             model_name="Davlan/distilbert-base-multilingual-cased-ner-hrl",
                             local_dir=str(Path(settings.BERT_MODEL_PATH) / "ner"),
@@ -132,7 +132,7 @@ if __name__ == "__main__":
                             )
     entities = ner.extract(text, doc_id="user", chunk_id="1")
     print(entities)
-    """
+    # """
     # ── Run COREF ──
     """
     entities = [Entity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, canonical_name='Apple Inc.', status=DisambiguationStatus.UNRESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
@@ -146,7 +146,7 @@ if __name__ == "__main__":
     """
     
     # ── Run RELATION EXTRACTION ──
-    # """
+    """
     resolved_entities = [
         MentionEntity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, canonical_name='Apple Inc.', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
         MentionEntity(text='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=1.0, canonical_name='Steve Jobs', status=DisambiguationStatus.RESOLVED, doc_id='user', chunk_id='1', kg_candidates=[], summary=None, context_clues=[], needs_review=False, is_nil=False, coref_to=None),
@@ -163,4 +163,4 @@ if __name__ == "__main__":
                                                 threshold=0)
     relations = relation_extractor(text, resolved_entities, "user", "1")
     print(relations)
-    # """
+    """

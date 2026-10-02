@@ -1,16 +1,10 @@
-import sys
 from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
 import torch
 from typing import List, Optional
-
 from transformers import AutoModelForTokenClassification
 from optimum.onnxruntime import ORTModelForTokenClassification
-
 from ingestion.models.base import IExtractor
-from storage.data_classes import (MentionEntity, EntityLabels)
+from domain import (MentionEntity, EntityLabels)
 from shared.utils import extract_exact_sentence, NON_LINKABLE_TYPES
 from ingestion.models.bert.utils import _load_model_robust, _load_tokenizer_robust
 

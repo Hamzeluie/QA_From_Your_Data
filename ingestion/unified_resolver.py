@@ -1,9 +1,3 @@
-# ingestion/unified_resolver.py
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 import json
 import logging
 from datetime import datetime
@@ -19,23 +13,11 @@ from sentence_transformers import SentenceTransformer
 from ingestion.models.base import IExtractor
 from storage.factory import StorageFactory
 from ingestion.candidate_finder import CandidateFinder, WikipediaEntitySummarizer
-from storage.data_classes import (
-    EntityLabels, 
-    DisambiguationStatus, 
-    Chunk, 
-    CandidateResult, 
-    MentionEntity, 
-    NEResult,
-    CandidateMatchMethod)
-from shared.utils import (
-    ValueNormalizer,
-    semantic_sentence_chunk, 
-    NON_LINKABLE_TYPES,
-    _UnionFind,
-    _normalize_mention, 
-    _labels_compatible, 
-    fuzzy_partial_ration,
-    )
+from domain import (EntityLabels, DisambiguationStatus, Chunk, 
+                    CandidateResult, MentionEntity, NEResult,
+                    CandidateMatchMethod)
+from shared.utils import (ValueNormalizer,semantic_sentence_chunk, NON_LINKABLE_TYPES,
+                          _UnionFind,_normalize_mention, _labels_compatible, fuzzy_partial_ration,)
 
 from config.settings import settings
 

@@ -1,13 +1,8 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
 import os
 from typing import List, Dict, Tuple
 
 from ingestion.models.base import IExtractor
-from storage.data_classes import MentionEntity
+from domain import MentionEntity
 from shared.utils import extract_exact_sentence
 from config.settings import settings
 

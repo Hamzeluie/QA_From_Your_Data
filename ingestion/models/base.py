@@ -1,11 +1,11 @@
-import sys
-from pathlib import Path
+# import sys
+# from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
+# PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# sys.path.insert(0, str(PROJECT_ROOT))
 from abc import ABC, abstractmethod
 from typing import List
-from storage.data_classes import MentionEntity
+from domain import MentionEntity
 
 
 class IExtractor(ABC):

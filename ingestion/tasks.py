@@ -1,15 +1,9 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import logging
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 
 from storage.factory import StorageFactory
-from storage.outbox import OutboxPoller
+from storage.outbox import SmartOutboxPoller
 from ingestion.pipeline import IngestionPipeline
 
 logger = logging.getLogger(__name__)
@@ -21,7 +15,7 @@ def _get_relation_extractor():
     Example: from ingestion.llm.relation_extractor import RelationExtractor
     """
     try:
-        from QA_From_Your_Data.ingestion.models.llm.llm_extractors import RelationExtractor
+        from .models.llm.relation_extractor import RelationExtractor
         return RelationExtractor(use_cot=True)
     except ImportError:
         # Fallback stub so Celery doesn't crash on import if you haven't created it yet
@@ -69,7 +63,7 @@ def poll_outbox_task(limit: int = 100):
     Celery beat task (schedule every 30s).
     Fans out Neo4j outbox events to ES/Qdrant/Redis.
     """
-    poller = OutboxPoller()
+    poller = SmartOutboxPoller()
     count = poller.process_batch(limit=limit)
     if count:
         logger.info(f"Outbox poll processed {count} events")

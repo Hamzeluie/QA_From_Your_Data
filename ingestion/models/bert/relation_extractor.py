@@ -1,21 +1,14 @@
 
-import sys
 import hashlib
 from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import torch
 import numpy as np
 from typing import List, Dict, Optional, Union
-
-
 from transformers import AutoModelForSequenceClassification
 from optimum.onnxruntime import ORTModelForSequenceClassification
 from ingestion.models.bert.utils import _load_tokenizer_robust, _load_model_robust
 from ingestion.models.base import IExtractor
-from storage.data_classes import (MentionEntity, Relation, RelationLabels)
+from domain import (MentionEntity, Relation, RelationLabels)
 
 
 class BertRelationExtractor(IExtractor):

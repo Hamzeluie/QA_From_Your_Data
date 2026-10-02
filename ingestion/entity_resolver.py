@@ -1,25 +1,16 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import os
 import re
 import json
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 import pandas as pd
-from ingestion.llm.llm_extractors import NERExtractor, NERWithConfidence, CorefResolver
+from .models.llm.coref_extractor import DSPyCorefResolver
+from .models.llm.ner_extractor import NERExtractor, NERWithConfidence
 import spacy
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from config.settings import settings
 from sentence_transformers import SentenceTransformer
-from QA_From_Your_Data.storage.data_classes import (Entity,
-                                 EntityLabels, 
-                                 DisambiguationStatus, 
-                                 ResolvedEntity)
-
+from domain import (Entity, EntityLabels, DisambiguationStatus, ResolvedEntity)
 from shared.utils import (WikipediaEntitySummarizer, 
                           ValueNormalizer,
                           jaccard_similarity,
@@ -464,7 +455,7 @@ class EntityResolver:
         self.catalog = EntityCatalog(embedder=embedder)
         
         self.nlp = spacy.load(settings.SPACY_MODEL_PATH)
-        self.coref = CorefResolver(self.nlp, mode="nlp")
+        self.coref = DSPyCorefResolver(self.nlp, mode="nlp")
         
         self.merge_threshold = merge_threshold
         self.cross_doc_threshold = cross_doc_threshold

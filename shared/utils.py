@@ -427,7 +427,6 @@ class ValueNormalizer:
         }
 
 
-
 class _UnionFind:
     """Disjoint-set for O(α(n)) mention merging."""
     def __init__(self, n: int):

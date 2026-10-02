@@ -1,10 +1,5 @@
-import sys
 import os
 import re
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 import requests
 import json
 import hashlib
@@ -17,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from sentence_transformers import SentenceTransformer
 from config.settings import settings
 from storage.factory import StorageFactory
-from storage.data_classes import CandidateResult, MentionEntity, EntityLabels, CandidateMatchMethod, DisambiguationStatus
+from domain import CandidateResult, MentionEntity, EntityLabels, CandidateMatchMethod, DisambiguationStatus
 from shared.utils import (char_ngram_jaccard,
                           levenshtein_ratio,
                           jaro_winkler,

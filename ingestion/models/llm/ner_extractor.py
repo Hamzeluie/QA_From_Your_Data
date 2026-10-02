@@ -1,15 +1,10 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
-
+import os
 import dspy
 import spacy
 from typing import List, Optional
 from collections import Counter
 from config.settings import settings
-from storage.data_classes import MentionEntity, EntityLabels
+from domain import MentionEntity, EntityLabels
 from ingestion.models.base import IExtractor
 from shared.utils import extract_exact_sentence, _locate_mention, NON_LINKABLE_TYPES
 
@@ -41,7 +36,7 @@ class NameEntityRecognition(dspy.Signature):
 
     Read the provided tokenized text and extract ALL named entities.
     For each entity, provide:
-    - text: the exact entity text as it appears in the input
+    - name: the exact entity name as it appears in the input
     - label: one of [{_LABEL_LIST}]
     - confidence: your confidence from 0.0 to 1.0
 
@@ -54,7 +49,7 @@ class NameEntityRecognition(dspy.Signature):
 
     tokens: str = dspy.InputField(desc="text of strings")
     entities: List[MentionEntity] = dspy.OutputField(
-        desc="List of extracted entities with text, label, and confidence."
+        desc="List of extracted entities with name, label, and confidence."
     )
 
 
@@ -62,7 +57,10 @@ class NERExtractor(dspy.Module):
     def __init__(self, use_cot: bool = False, nlp: Optional[spacy.Language] = None):
         super().__init__()
         if nlp is None:
-            nlp = spacy.load(settings.SPACY_MODEL_PATH)
+            try:
+                nlp = spacy.load(os.path.join(settings.SPACY_MODEL_PATH, settings.SPACY_MODEL_NAME))
+            except:
+                nlp = spacy.load("en_core_web_sm")
         self.nlp = nlp
         self.extractor = dspy.ChainOfThought(NameEntityRecognition) if use_cot else dspy.Predict(NameEntityRecognition)
 
@@ -78,9 +76,8 @@ class NERExtractor(dspy.Module):
                 ent_label = EntityLabels.MISC
 
             conf = max(0.0, min(1.0, float(ent.confidence)))
-
             # Robustly locate the entity, regardless of LLM return order
-            start, end = _locate_mention(sentence, ent.text, used_spans)
+            start, end = _locate_mention(sentence, ent.name, used_spans)
 
             # Only extract a mention sentence if we actually found the span
             if start != -1:
@@ -99,7 +96,7 @@ class NERExtractor(dspy.Module):
                 MentionEntity(
                     doc_id=doc_id,
                     chunk_id=chunk_id,
-                    text=ent.text,
+                    name=ent.name,
                     label=ent_label,
                     start=start,
                     end=end,
@@ -119,7 +116,10 @@ class NERWithConfidence(dspy.Module):
     def __init__(self, n_passes: int = 3, agreement_threshold: float = 0.6, nlp:spacy=None):
         super().__init__()
         if nlp is None:
-            nlp = spacy.load("en_core_web_sm")
+            try:
+                nlp = spacy.load(os.path.join(settings.SPACY_MODEL_PATH, settings.SPACY_MODEL_NAME))
+            except:
+                nlp = spacy.load("en_core_web_sm")
         self.nlp = nlp
         self.extractor = NERExtractor(use_cot=False, nlp=self.nlp)
         self.n_passes = n_passes
@@ -128,7 +128,7 @@ class NERWithConfidence(dspy.Module):
     def _entity_key(self, ent: MentionEntity) -> str:
         # NOTE: ent is a pydantic Entity, not a dict — must use attribute
         # access. Item access (ent['text']) raises TypeError.
-        return f"{ent.text.lower().strip()}::{ent.label}"
+        return f"{ent.name.lower().strip()}::{ent.label}"
 
     def forward(self, sentence: str, doc_id:str, chunk_id:str):
         all_extractions: List[MentionEntity] = []
@@ -188,6 +188,6 @@ class DSPyNERExtractor(IExtractor):
 if __name__ == "__main__":
     text = "Apple Inc. was founded by Steve Jobs. He served as the CEO of the company. The firm is headquartered in Cupertino."
     ner = DSPyNERExtractor()
-    entities = ner(text, "doc1","chunk1")
+    entities = ner.extract(text, "doc1","chunk1")
     print(entities)
 

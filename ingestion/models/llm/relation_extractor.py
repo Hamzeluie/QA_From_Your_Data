@@ -1,8 +1,3 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
 import re
 import json
 import dspy
@@ -10,7 +5,7 @@ import hashlib
 import pandas as pd
 from typing import List, Dict, Optional, Union
 from config.settings import settings
-from storage.data_classes import MentionEntity, Relation, EntityLabels, RelationLabels
+from domain import CanonicalEntity, Relation, EntityLabels, RelationLabels
 from ingestion.models.base import IExtractor
 
 
@@ -101,55 +96,48 @@ class RelationExtractor(dspy.Module):
         self.min_confidence = min_confidence
 
     @staticmethod
-    def _get_canonical_name(e: Union[MentionEntity, Dict]) -> str:
-        if isinstance(e, MentionEntity):
-            return e.canonical_name
-        if isinstance(e, MentionEntity):
-            return getattr(e, "canonical_name", e.text)
+    def _get_canonical_name(e: Union[CanonicalEntity, Dict]) -> str:
+        if isinstance(e, CanonicalEntity):
+            return getattr(e, "name", e.name)
         return e.get("canonical_name", e.get("text", ""))
 
     @staticmethod
-    def _get_label(e: Union[MentionEntity, Dict]) -> str:
-        if isinstance(e, MentionEntity):
+    def _get_label(e: Union[CanonicalEntity, Dict]) -> str:
+        if isinstance(e, CanonicalEntity):
             return e.label
-        if isinstance(e, MentionEntity):
+        if isinstance(e, CanonicalEntity):
             return e.label
         return e.get("entity_label", e.get("label", "UNKNOWN"))
-
-    @staticmethod
-    def _get_original_text(e: Union[MentionEntity, Dict]) -> str:
-        if isinstance(e, MentionEntity):
-            return e.text
-        if isinstance(e, MentionEntity):
-            return e.text
-        return e.get("original_text", e.get("text", ""))
-
-    def forward(self, text: str, entities: List[Union[MentionEntity, Dict]], doc_id:str, chunk_id:str) -> List[Relation]:
-        if not entities or len(entities) < 2:
+    
+    def forward(self, text: str, entities: List[Union[CanonicalEntity, Dict]], doc_id:str, chunk_id:str) -> List[Relation]:
+        if len(entities) < 2:
             return []
 
-        # ── Build lookup maps + prompt payload ──
         entity_map: Dict[str, Dict[str, str]] = {}
         prompt_entities: List[Dict[str, str]] = []
+        seen_canonical_ids: set[str] = set()
 
-        for e in entities:
-            canon = self._get_canonical_name(e)
-            label = self._get_label(e)
-            orig = self._get_original_text(e)
+        for entity in entities:
+            canonical_id = entity.canonical_id
 
-            if canon:
-                entity_map[canon.lower()] = {"canonical": canon, "label": label}
-            if orig and orig.lower() != canon.lower():
-                entity_map[orig.lower()] = {"canonical": canon, "label": label}
+            if canonical_id in seen_canonical_ids:
+                continue
 
-            prompt_entities.append(
-                {
-                    "canonical_name": canon,
-                    "entity_label": label,
-                    "original_text": orig,
-                }
-            )
+            seen_canonical_ids.add(canonical_id)
 
+            entity_map[entity.name.lower()] = {
+                "canonical": entity.name,
+                "label": entity.label,
+            }
+
+            prompt_entities.append({
+                "name": entity.name,
+                "label": entity.label,
+            })
+
+        if len(prompt_entities) < 2:
+            return []
+        
         # ── LLM call ──
         try:
             prediction = self.extractor(text=text, entities=prompt_entities)
@@ -356,10 +344,26 @@ class DSPyRelationExtractor(IExtractor):
             dspy_extractor = RelationExtractor(use_cot=use_cot, min_confidence=min_confidence)
         self._extractor = dspy_extractor
 
-    def extract(self, text: str, entities: List[Union[MentionEntity, Dict]], doc_id:str, chunk_id:str) -> List[Relation]:
+    def extract(self, text: str, entities: List[Union[CanonicalEntity, Dict]], doc_id:str, chunk_id:str) -> List[Relation]:
         if len(entities) < 2:
             return []
         result = self._extractor(text=text, entities=entities, doc_id=doc_id, chunk_id=chunk_id)
         return result
+    
+
+if __name__ == "__main__":
+    from domain import DisambiguationStatus
+    text = "Apple Inc. was founded by Steve Jobs. He served as the CEO of the company. The firm is headquartered in Cupertino."
+    resolved_entities = [
+            CanonicalEntity(canonical_id="c_0",name='Apple Inc.', label=EntityLabels.ORG),
+            CanonicalEntity(canonical_id="c_1",name='Steve Jobs', label=EntityLabels.PER),
+            CanonicalEntity(canonical_id="c_3",name='Cupertino', label=EntityLabels.LOC ),
+            CanonicalEntity(canonical_id="c_1",name='Steve Jobs', label=EntityLabels.PER),
+            CanonicalEntity(canonical_id="c_0",name='Apple Inc.', label=EntityLabels.ORG),
+            CanonicalEntity(canonical_id="c_0",name='Apple Inc.', label=EntityLabels.ORG)
+            ]
+    relation_extractor = DSPyRelationExtractor()
+    relations = relation_extractor(text, resolved_entities, "user", "1")
+    print(relations)
 
 

@@ -1,8 +1,3 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(PROJECT_ROOT))
 import os
 import re
 import dspy
@@ -10,7 +5,7 @@ import spacy
 from spacy.tokens import Doc, Token
 from typing import List, Dict, Optional
 from config.settings import settings
-from storage.data_classes import MentionEntity, CorefChain, Mention, EntityLabels, DisambiguationStatus
+from domain import MentionEntity, CorefChain, EntityLabels, DisambiguationStatus, CorefMention
 from ingestion.models.base import IExtractor
 from shared.utils import extract_exact_sentence
 
@@ -229,7 +224,7 @@ class DSPyCorefResolver_v1(IExtractor):
     # NLP RESOLUTION
     # -----------------------------------------------------------------------
 
-    def _resolve_nlp(self, pronouns: List[Mention],
+    def _resolve_nlp(self, pronouns: List[CorefMention],
                      named_ents: List[MentionEntity],
                      text: str) -> List[CorefChain]:
         resolutions = []
@@ -267,7 +262,7 @@ class DSPyCorefResolver_v1(IExtractor):
         return resolutions
 
     def _score_antecedent(self, antecedent: MentionEntity,
-                          pronoun: Mention,
+                          pronoun: CorefMention,
                           text: str) -> float:
         score = 0.0
         ant_start = getattr(antecedent, "start", 0)
@@ -307,7 +302,7 @@ class DSPyCorefResolver_v1(IExtractor):
     # LLM RESOLUTION
     # -----------------------------------------------------------------------
 
-    def _resolve_llm(self, pronouns: List[Mention],
+    def _resolve_llm(self, pronouns: List[CorefMention],
                      named_ents: List[MentionEntity],
                      text: str) -> List[CorefChain]:
         if not self.llm_resolver or not pronouns:
@@ -386,7 +381,7 @@ class DSPyCorefResolver_v1(IExtractor):
     # HYBRID RESOLUTION
     # -----------------------------------------------------------------------
 
-    def _resolve_hybrid(self, pronouns: List[Mention],
+    def _resolve_hybrid(self, pronouns: List[CorefMention],
                         named_ents: List[MentionEntity],
                         text: str) -> List[CorefChain]:
         person_pronouns = [
@@ -470,7 +465,7 @@ class DSPyCorefResolver_v1(IExtractor):
     # HELPERS
     # -----------------------------------------------------------------------
 
-    def _extract_pronouns(self, doc, text: str) -> List[Mention]:
+    def _extract_pronouns(self, doc, text: str) -> List[CorefMention]:
         pronouns = []
         sent_id = 0
         last_end = 0
@@ -493,7 +488,7 @@ class DSPyCorefResolver_v1(IExtractor):
 
             pattern = r'\b(' + '|'.join(re.escape(k) for k in self.PRONOUN_MAP.keys()) + r')\b'
             for match in re.finditer(pattern, sent_text, re.IGNORECASE):
-                pronouns.append(Mention(
+                pronouns.append(CorefMention(
                     text=match.group(),
                     start=sent_start + match.start(),
                     end=sent_start + match.end(),
@@ -730,28 +725,40 @@ class DSPyCorefResolver(IExtractor):
     # ─────────────────────────────────────────────
     #  PRONOUN EXTRACTION  (morphology-based)
     # ─────────────────────────────────────────────
-
-    def _extract_pronouns(self, doc: Optional[Doc], text: str) -> List[Mention]:
+    def _extract_pronouns(self,doc: Optional[Doc],text: str) -> List[CorefMention]:
         """
-        Extract pronouns using POS + morphological features.
-        No PRONOUN_MAP. Works for any personal pronoun the model knows.
+        Extract personal pronouns using spaCy POS + morphology.
         """
-        pronouns: List[Mention] = []
+        pronouns: List[CorefMention] = []
 
         if doc is None:
             return pronouns
 
         for token in doc:
-            if self._is_personal_pronoun(token):
-                pronouns.append(Mention(
+            if not self._is_personal_pronoun(token):
+                continue
+
+            pronouns.append(
+                CorefMention(
                     text=token.text,
                     start=token.idx,
                     end=token.idx + len(token.text),
-                    sent_id=self._token_sent_id(doc, token),
+
+                    # Pronouns don't have a separate nominal head in this model.
+                    head=token.text,
+                    head_lemma=token.lemma_,
+                    pos=token.pos_,
+
+                    label=None,
+                    sentence_id=self._token_sent_id(doc, token),
+
+                    number=self._morph_number(token),
+                    gender=self._morph_gender(token),
+
                     is_pronoun=True,
-                    pronoun_type=self._pronoun_to_label(token),
-                    token=token
-                ))
+                    is_named_entity=False,
+                )
+            )
 
         return pronouns
 
@@ -766,7 +773,7 @@ class DSPyCorefResolver(IExtractor):
     #  NLP RESOLUTION  (morphology-based scoring)
     # ─────────────────────────────────────────────
 
-    def _resolve_nlp(self, pronouns: List[Mention],
+    def _resolve_nlp(self, pronouns: List[CorefMention],
                      named_ents: List[MentionEntity],
                      text: str) -> List[CorefChain]:
         resolutions: List[CorefChain] = []
@@ -821,7 +828,7 @@ class DSPyCorefResolver(IExtractor):
         return resolutions
 
     def _score_antecedent(self, antecedent: MentionEntity,
-                          pronoun: Mention,
+                          pronoun: CorefMention,
                           text: str,
                           antecedent_gender: str = "U") -> float:
         """
@@ -888,7 +895,7 @@ class DSPyCorefResolver(IExtractor):
     #  LLM RESOLUTION  (unchanged)
     # ─────────────────────────────────────────────
 
-    def _resolve_llm(self, pronouns: List[Mention],
+    def _resolve_llm(self, pronouns: List[CorefMention],
                      named_ents: List[MentionEntity],
                      text: str) -> List[CorefChain]:
         if not self.llm_resolver or not pronouns:
@@ -965,7 +972,7 @@ class DSPyCorefResolver(IExtractor):
     #  HYBRID RESOLUTION  (now uses morphology-derived category)
     # ─────────────────────────────────────────────
 
-    def _resolve_hybrid(self, pronouns: List[Mention],
+    def _resolve_hybrid_old(self, pronouns: List[CorefMention],
                         named_ents: List[MentionEntity],
                         text: str) -> List[CorefChain]:
         # Split by morphological salience instead of PRONOUN_MAP["category"]
@@ -1009,6 +1016,118 @@ class DSPyCorefResolver(IExtractor):
                 resolutions.extend(llm_res)
 
         return resolutions
+
+
+    def _is_person_like_pronoun(
+        self,
+        mention: CorefMention,
+    ) -> bool:
+
+        if mention.gender in ("M", "F"):
+            return True
+
+        # First-person references are potentially organizations/groups.
+        if mention.head_lemma.lower() in {
+            "we",
+            "us",
+            "our",
+            "ours",
+        }:
+            return True
+
+        return False
+    
+    def _resolve_hybrid(
+        self,
+        pronouns: List[CorefMention],
+        named_ents: List[MentionEntity],
+        text: str,
+    ) -> List[CorefChain]:
+
+        person_pronouns = [
+            p
+            for p in pronouns
+            if self._is_person_like_pronoun(p)
+        ]
+
+        ambiguous_pronouns = [
+            p
+            for p in pronouns
+            if not self._is_person_like_pronoun(p)
+        ]
+
+        resolutions: List[CorefChain] = []
+        resolved_starts: set[int] = set()
+
+        # NLP first for strongly constrained pronouns
+        if person_pronouns:
+
+            nlp_res = self._resolve_nlp(
+                person_pronouns,
+                named_ents,
+                text,
+            )
+
+            for r in nlp_res:
+                resolutions.append(r)
+                resolved_starts.add(r.pronoun.start)
+
+            # LLM fallback for uncertain NLP resolutions
+            low_conf = [
+                r
+                for r in nlp_res
+                if r.confidence < 0.6
+            ]
+
+            if low_conf and self.llm_resolver:
+
+                llm_res = self._resolve_llm(
+                    [r.pronoun for r in low_conf],
+                    named_ents,
+                    text,
+                )
+
+                for lr in llm_res:
+
+                    old = next(
+                        (
+                            r
+                            for r in resolutions
+                            if r.pronoun.start == lr.pronoun.start
+                        ),
+                        None,
+                    )
+
+                    if old is None:
+                        resolutions.append(lr)
+
+                    elif lr.confidence > old.confidence:
+                        resolutions.remove(old)
+                        resolutions.append(lr)
+
+        # LLM for ambiguous pronouns:
+        # it, they, their, etc.
+        if ambiguous_pronouns and self.llm_resolver:
+
+            unresolved = [
+                p
+                for p in ambiguous_pronouns
+                if p.start not in resolved_starts
+            ]
+
+            if unresolved:
+
+                llm_res = self._resolve_llm(
+                    unresolved,
+                    named_ents,
+                    text,
+                )
+
+                resolutions.extend(llm_res)
+
+        return resolutions
+
+
 
     # ─────────────────────────────────────────────
     #  DEFINITE DESCRIPTIONS  (noun-chunk based, no regex list)
@@ -1107,12 +1226,12 @@ class DSPyCorefResolver(IExtractor):
 if __name__ == "__main__":
     text = "Apple Inc. was founded by Steve Jobs. He served as the CEO of the company. The firm is headquartered in Cupertino."
     entitie = [
-            MentionEntity(text='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, doc_id='doc1', chunk_id='chunk1', coref_to=None),
-            MentionEntity(text='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=0.99, doc_id='doc1', chunk_id='chunk1', coref_to=None),
-            MentionEntity(text='Cupertino', label=EntityLabels.LOC, start=104, end=113, mention_sentence='The firm is headquartered in <Cupertino>.', confidence=0.98, doc_id='doc1', chunk_id='chunk1', coref_to=None)
+            MentionEntity(name='Apple Inc.', label=EntityLabels.ORG, start=0, end=10, mention_sentence='<Apple Inc.> was founded by Steve Jobs.', confidence=0.99, doc_id='doc1', chunk_id='chunk1', coref_to=None),
+            MentionEntity(name='Steve Jobs', label=EntityLabels.PER, start=26, end=36, mention_sentence='Apple Inc. was founded by <Steve Jobs>.', confidence=0.99, doc_id='doc1', chunk_id='chunk1', coref_to=None),
+            MentionEntity(name='Cupertino', label=EntityLabels.LOC, start=104, end=113, mention_sentence='The firm is headquartered in <Cupertino>.', confidence=0.98, doc_id='doc1', chunk_id='chunk1', coref_to=None)
             ]
 
-    coref = DSPyCorefResolver(nlp="/home/mehdi/Documents/projects/knowledge_graph_examples/QA_From_Your_Data/checkpoints/en_core_web/en_core_web_trf-3.8.0")
+    coref = DSPyCorefResolver(nlp="/home/mehdi/Documents/projects/knowledge_graph_examples/QA_From_Your_Data/checkpoints/en_core_web_checkpoints/en_core_web_trf-3.8.0")
     entities = coref(text, entitie)
     print(entities)
    

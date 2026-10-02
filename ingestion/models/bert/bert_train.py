@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# train_docred.py
 import json
 import torch
 import torch.nn as nn

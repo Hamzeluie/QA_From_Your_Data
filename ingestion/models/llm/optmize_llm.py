@@ -1,6 +1,6 @@
 import dspy
-from QA_From_Your_Data.ingestion.models.llm.llm_extractors import NERExtraction
-from QA_From_Your_Data.ingestion.models.llm.llm_evaluation import ner_gepa_metric
+from .ner_extractor import DSPyNERExtractor
+from ingestion.models.llm.llm_evaluation import ner_gepa_metric
 
 
 def optimize_ner(train_data, save_dir:str="./optimized_ner.json"):
@@ -18,7 +18,7 @@ def optimize_ner(train_data, save_dir:str="./optimized_ner.json"):
         metric=lambda ex, pred, trace=None: ner_gepa_metric(ex, pred, trace, criteria="partial"),
         max_bootstrapped_demos=4
     )
-    optimized_ner = optimizer.compile(NERExtraction(), train=train_examples)
+    optimized_ner = optimizer.compile(DSPyNERExtractor(), train=train_examples)
     optimized_ner.save(save_dir)
     print("Optimized NER model saved to:", save_dir)
     return optimized_ner

@@ -1,20 +1,14 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 import os
 import logging
-from typing import Optional, Union, List
-from storage.neo4j_store import Neo4jEntityStore
+from typing import Optional
+from storage.neo4j_store import Neo4jGraphStore
 from storage.postgres_store import PostgresStateStore
 from storage.qdrant_store import QdrantVectorStore
-from storage.elasticsearch_store import ElasticsearchEntitySearch
+from storage.elasticsearch_store import ElasticsearchTextSearch
 from storage.redis_cache import RedisCache
-from storage.data_classes import MentionEntity, Relation, Chunk
+
 
 logger = logging.getLogger(__name__)
-
 
 class StorageFactory:
     """
@@ -108,9 +102,9 @@ class StorageFactory:
     # ── Lazy singletons ───────────────────────────────────────────────────────
 
     @property
-    def neo4j(self) -> Neo4jEntityStore:
+    def neo4j(self) -> Neo4jGraphStore:
         if self._neo4j is None:
-            self._neo4j = Neo4jEntityStore(**self._neo4j_cfg)
+            self._neo4j = Neo4jGraphStore(**self._neo4j_cfg)
         return self._neo4j
 
     @property
@@ -126,9 +120,9 @@ class StorageFactory:
         return self._qdrant
 
     @property
-    def es(self) -> ElasticsearchEntitySearch:
+    def es(self) -> ElasticsearchTextSearch:
         if self._es is None:
-            self._es = ElasticsearchEntitySearch(
+            self._es = ElasticsearchTextSearch(
                 self._es_cfg["hosts"],
                 self._es_cfg.get("username"),
                 self._es_cfg.get("password"),
@@ -146,15 +140,13 @@ class StorageFactory:
     def init_all(self) -> None:
         """Idempotent initialization of schema/indexes/collections."""
         self.neo4j.init_schema()
-        self.postgres.init_tables()
+        self.postgres.init_schema()
         self.qdrant.init_collections()
         self.es.init_index()
-        self.es.init_chunks_index()
         # Redis needs no schema init
 
     def close_all(self) -> None:
         if self._neo4j:
-            self._neo4j.close()
-    
+            self._neo4j.close()        
     
     

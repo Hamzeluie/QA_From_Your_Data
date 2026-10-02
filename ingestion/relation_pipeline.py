@@ -1,8 +1,3 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 import hashlib
 import logging
 from typing import List, Optional
@@ -10,7 +5,7 @@ from dataclasses import fields
 
 from ingestion.models.base import IExtractor
 from storage.factory import StorageFactory
-from storage.data_classes import Relation, RelationLabels, EntityLabels, MentionEntity, Chunk
+from domain import Relation, RelationLabels, EntityLabels, MentionEntity, Chunk
 
 logger = logging.getLogger(__name__)
 
